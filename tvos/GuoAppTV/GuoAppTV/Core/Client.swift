@@ -90,9 +90,13 @@ actor CoreClient {
         return playbackSequence
     }
 
-    /// 初始化核心。返回核心编译时是否包含全部站源（--all-sources）。
-    func initialize() async throws -> Bool {
-        if initialized { return allSources }
+    /// 初始化核心。返回核心编译时是否包含全部站源（--all-sources）与站源清单。
+    ///
+    /// 上游自 1.0.8 起不再返回 allSources 布尔值，改为返回编译期版本名
+    /// flavor（hongguojian / zhenguojian）与站源清单 sources；
+    /// 界面不再写死站源表，改为按核心给的清单显示。
+    func initialize() async throws -> (allSources: Bool, sources: [SourceSite]) {
+        if initialized { return (allSources, sources) }
         // tvOS 沙盒：真机上 Documents / Application Support 只读，只有
         // Caches 与 tmp 可写。核心的数据目录必须放在 Caches；代价是
         // 系统在存储不足时可能回收 Caches（缓存、海报、进度会丢失，
@@ -102,12 +106,18 @@ actor CoreClient {
         ).first ?? FileManager.default.temporaryDirectory
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let data = try await call(["action": "initialize", "directory": directory.path])
-        allSources = data["allSources"] as? Bool ?? false
+        flavor = data["flavor"] as? String ?? ""
+        allSources = flavor == "zhenguojian"
+        sources = (data["sources"] as? [[String: Any]] ?? []).compactMap { SourceSite(dict: $0) }
         initialized = true
-        return allSources
+        return (allSources, sources)
     }
 
     private(set) var allSources = false
+    /// 核心编译期版本名：hongguojian（仅红果）/ zhenguojian（全部站源）。
+    private(set) var flavor = ""
+    /// 核心告知的站源清单（含名称、描述与可用能力）。
+    private(set) var sources: [SourceSite] = []
 
     func categories(source: String, force: Bool = false) async throws -> [Category] {
         if !force, let entry = categoriesCache[source], isFresh(entry.timestamp) {

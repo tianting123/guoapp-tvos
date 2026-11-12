@@ -26,6 +26,33 @@
 - 修复播放一会后 tvOS 屏保自动弹出：mpv 不是 AVPlayer，系统不知道在播视频；
   播放时禁止系统空闲计时器，暂停 / 停止 / 切后台时恢复。
 
+## 2.47
+
+- 同步上游核心到 Xanerix/guoapp `0b48331`（1.0.9+109），共 12 个提交。其中
+  **#114 系统 DNS 解析到 0.0.0.0 / 环回地址时报错时改用 DoH 重连，修复部分
+  电视盒和网络下红果设备注册失败**——这一条直接影响 tvOS 能否拿到播放地址。
+  另有红果系列剧、纯黑深色模式、定时停止、画面比例、红果听书站源、
+  榜单集数修复、Windows/macOS 窗口置顶等。
+- ⭐ **适配上游站源架构重构**（上游把 15 个官方站源搬进独立 Go 包
+  `native/sources` 并移入私有仓库，运行时不再持有具体站源代码）：
+  - 本仓改为自带 `fork/sources/` 站源包（取自上游 `62fb9d4` 公开可见的
+    `native/sources/`，共 53 个文件），构建时覆盖上游的 `native/sources/`，
+    保证站源可用且构建可复现，不再依赖上游的私有站源仓库。
+  - 红果出品方功能改为在站源包内实现（`fork/sources/provider_hongguo_producer.go`）：
+    解析搜索/列表载荷的 `copyright` 得到出品方名，按出品方精确过滤片单，
+    再用网页详情补上线日期，供按「最新 / 最热」排序。
+  - core 侧只保留协议与承载字段的最小改动：`Drama` / `LibraryDrama` 增加
+    `Producer` 字段、`nativeDispatch` 增加 `producerDramas` 与 `producerWorks`
+    两个动作、出品方能力通过可选接口 `ProducerProvider` 由站源实现，
+    core 不内置任何具体站源逻辑。
+- ⭐ **版本开关改用 Go build tag**：上游已移除旧的 linker 变量
+  `core.buildAllSources`，改为 `hongguojian` / `zhenguojian` 两个 build tag
+  （由站源包里的 `flavor_*.go` 决定注册哪些站源）。构建脚本随之改用
+  `-tags=<版本名>`，旧的 `-X .../core.buildAllSources=true` 已不再生效。
+- `apply_fork_overlay.py` 改为逐文件覆盖 `native/sources/`（不再整目录删除），
+  并在合入后生成 `native/go.work` 与 `native/bridge/sources_gen.go` 接入本仓
+  的站源包；这两个文件上游不入库，每次构建重新生成。
+
 ## 2.46
 
 - 同步上游核心到 Xanerix/guoapp `e8bebee`（docs: 黄果 AI 播放修复写入更新日志，并更新实机验证说明（#103，1.0.8+108））。本次仅更新 Go 核心（submodule 指针），tvOS 应用代码无改动。

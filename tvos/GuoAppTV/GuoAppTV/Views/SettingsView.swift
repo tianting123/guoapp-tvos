@@ -53,7 +53,7 @@ struct SettingsView: View {
 
     private var sourceGroup: some View {
         TVSettingGroup(title: "站源") {
-            let sites = SourceSite.available(allSources: appState.allSources)
+            let sites = appState.availableSites
             ForEach(Array(sites.enumerated()), id: \.element.id) { index, site in
                 if index > 0 {
                     TVSettingDivider()

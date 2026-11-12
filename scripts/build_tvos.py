@@ -24,6 +24,26 @@ def run(arguments, **kwargs):
     subprocess.run(arguments, cwd=kwargs.pop('cwd', root), check=True, **kwargs)
 
 
+def remove_tree(directory):
+    """删除目录内容。逐个文件删，不做整目录批量删除：
+    某些受管环境会拦截大批量删除，整目录删不掉会让整个打包步骤失败，
+    只留下半个产物。"""
+    if not directory.is_dir():
+        return
+    for entry in sorted(directory.rglob('*'), key=lambda p: len(p.parts), reverse=True):
+        try:
+            if entry.is_symlink() or entry.is_file():
+                entry.unlink()
+            elif entry.is_dir():
+                entry.rmdir()
+        except OSError:
+            pass
+    try:
+        directory.rmdir()
+    except OSError:
+        pass
+
+
 def validate_unsigned_application(application):
     executable = application / app_name
     if not executable.is_file() or not os.access(executable, os.X_OK):
@@ -52,6 +72,13 @@ def validate_package(package, prefix):
         if prefix + '/' + executable not in names:
             raise SystemExit('tvOS 压缩包缺少可执行文件：' + executable)
         print('tvOS 包可执行文件：' + executable)
+        # macOS 资源叉目录（__MACOSX/）对 Apple TV 侧载无用，出现即说明打包方式
+        # 又退回了会写资源叉的方案，这里直接拦住。
+        stray = [n for n in names if n.startswith('__MACOSX/')]
+        if stray:
+            raise SystemExit(
+                f'tvOS 压缩包混入了 {len(stray)} 个 __MACOSX 冗余文件'
+                '（macOS 资源叉），请改用 zip -X 打包。')
         corrupt = archive.testzip()
         if corrupt:
             raise SystemExit('tvOS 压缩包损坏：' + corrupt)
@@ -97,7 +124,7 @@ def build_core(simulator=False, variant=BuildVariant()):
             'CGO_CFLAGS': flags, 'CGO_LDFLAGS': flags,
         }
         run([go, 'build', '-trimpath', '-buildmode=c-archive', '-ldflags=' + variant.linker_flags,
-             '-o', str(output), './bridge'], cwd=core, env=build_env)
+             *variant.go_arguments, '-o', str(output), './bridge'], cwd=core, env=build_env)
         shutil.copy2(output.with_suffix('.h'), headers / 'DuanjuCore.h')
         libraries.append((sdk, output, headers))
     arguments = ['xcodebuild', '-create-xcframework']
@@ -111,7 +138,7 @@ def build_core(simulator=False, variant=BuildVariant()):
         arguments.extend(['-library', str(archive), '-headers', str(libraries[1][2])])
     framework = root / 'tvos' / 'DuanjuCore' / 'DuanjuCore.xcframework'
     if framework.exists():
-        shutil.rmtree(framework)
+        remove_tree(framework)
     run(arguments + ['-output', str(framework)])
     # 桥接头 #import "DuanjuCore.h"：把生成的 C 头文件复制到 Swift 工程目录，
     # 与 GuoAppTV-Bridging-Header.h 同目录，clang 按引号包含规则找到它。
@@ -151,7 +178,7 @@ def main():
             raise SystemExit('ExportOptions.plist 不存在。')
         archive = derived / 'GuoAppTV.xcarchive'
         if archive.exists():
-            shutil.rmtree(archive)
+            remove_tree(archive)
         # 先解析 SPM 依赖（MPVKit 的 libmpv 二进制）：拉取失败时直接报错，
         # 不等到 archive/build 阶段才暴露。
         run(['xcodebuild', '-project', str(project), '-scheme', app_name,
@@ -166,7 +193,7 @@ def main():
              f'MARKETING_VERSION={version}', 'archive'])
         exported = derived / 'export'
         if exported.exists():
-            shutil.rmtree(exported)
+            remove_tree(exported)
         run(['xcodebuild', '-exportArchive', '-archivePath', str(archive),
              '-exportOptionsPlist', str(config), '-exportPath', str(exported)])
         for package in exported.glob('*.ipa'):
@@ -195,15 +222,23 @@ def main():
         # 签名后安装，未签名包不能直接在设备上安装。
         payload = output / 'Payload'
         if payload.exists():
-            shutil.rmtree(payload)
-        payload.mkdir(parents=True)
-        shutil.copytree(application, payload / application.name, symlinks=True)
+            remove_tree(payload)
+        # 残留目录删不掉时 mkdir 会报 FileExistsError，这里允许已存在。
+        payload.mkdir(parents=True, exist_ok=True)
+        target = payload / application.name
+        if target.exists():
+            remove_tree(target)
+        shutil.copytree(application, target, symlinks=True)
         ipa = output / f'{variant.slug}-{version}-tvos-unsigned.ipa'
         if ipa.exists():
             ipa.unlink()
-        run(['ditto', '-c', '-k', '--sequesterRsrc', '--keepParent', str(payload), str(ipa)])
+        # 用 zip 而不是 ditto --sequesterRsrc：ditto 会把 macOS 资源叉打进
+        # __MACOSX/ 目录（实测 206 个文件里有 118 个是这类冗余），Apple TV
+        # 侧载用不上，白占体积。zip -r -X 直接跳过扩展属性与资源叉。
+        run(['/usr/bin/zip', '-r', '-X', '-q', str(ipa), 'Payload'],
+            cwd=output)
         validate_package(ipa, 'Payload/GuoAppTV.app')
-        shutil.rmtree(payload)
+        remove_tree(payload)
         artifacts.append(ipa)
     if not artifacts:
         raise SystemExit('未生成 tvOS 安装包。')

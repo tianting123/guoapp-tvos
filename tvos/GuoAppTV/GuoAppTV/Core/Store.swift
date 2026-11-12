@@ -9,14 +9,23 @@ final class AppState: ObservableObject {
     @Published var initializeError: String?
     @Published var allSources = false
     @Published var selectedSource = "hongguo"
+    /// 核心告知的站源清单（上游自 1.0.8 起由核心在初始化时给出）。
+    @Published var sources: [SourceSite] = []
+
+    /// 当前可用站源：优先用核心给的清单，缺失时退回写死列表。
+    var availableSites: [SourceSite] {
+        SourceSite.available(allSources: allSources, coreSources: sources)
+    }
 
     /// 启动本地核心；已初始化时直接返回。失败时保留错误文案供界面重试。
     func bootstrap() async {
         guard !initialized else { return }
         initializeError = nil
         do {
-            allSources = try await CoreClient.shared.initialize()
-            if !SourceSite.available(allSources: allSources).contains(where: { $0.id == selectedSource }) {
+            let result = try await CoreClient.shared.initialize()
+            allSources = result.allSources
+            sources = result.sources
+            if !availableSites.contains(where: { $0.id == selectedSource }) {
                 selectedSource = "hongguo"
             }
             initialized = true

@@ -256,8 +256,30 @@ struct SourceSite: Identifiable, Hashable {
     let name: String
     let description: String
 
-    /// 与 Dart 侧 SourceSite.knownValues 对齐；站源列表由核心的 allSources 编译开关决定。
-    static func available(allSources: Bool) -> [SourceSite] {
+    init(id: String, name: String, description: String) {
+        self.id = id
+        self.name = name
+        self.description = description
+    }
+
+    /// 核心 `initialize` 返回的站源条目（Go 侧 nativeSourceInfo）。
+    init?(dict: [String: Any]) {
+        let identifier = stringValue(dict, "id")
+        guard !identifier.isEmpty else { return nil }
+        id = identifier
+        name = stringValue(dict, "name").isEmpty ? identifier : stringValue(dict, "name")
+        description = stringValue(dict, "description")
+    }
+
+    /// 与 Dart 侧 SourceSite.knownValues 对齐。
+    ///
+    /// 上游自 1.0.8 起由核心在初始化时告知站源清单（`initialize` 的 sources），
+    /// 界面不再写死站源表。这里优先用核心给的清单；核心没给时（例如旧版核心）
+    /// 再退回按 allSources 编译开关决定的写死列表。
+    static func available(allSources: Bool, coreSources: [SourceSite] = []) -> [SourceSite] {
+        if !coreSources.isEmpty {
+            return coreSources
+        }
         let hongguo = SourceSite(id: "hongguo", name: "红果", description: "短剧 · 漫剧 · AI 剧")
         guard allSources else { return [hongguo] }
         return [

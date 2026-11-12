@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""把 fork 对上游核心的改动覆盖到 submodule 工作区。
+"""把本仓对上游核心的改动覆盖到 submodule 工作区。
 
 构建前必跑（scripts/build_tvos.py 的 build_core 会自动调它）。
 幂等，可反复跑：
@@ -7,7 +7,9 @@
 1. 先把上次补丁改过的文件还原到 submodule 指针版本；
 2. 删掉上次拷入的 fork 新增文件；
 3. 重新拷入 fork/core/*.go；
-4. 按文件名顺序打上 fork/patches/*.patch。
+4. 按文件名顺序打上 fork/patches/*.patch；
+5. 用 fork/sources/ 覆盖上游的 native/sources/（站源包）；
+6. 生成 native/go.work 与 native/bridge/sources_gen.go 接入站源包。
 
 只动 fork 清单里的文件，不碰 submodule 其他内容。补丁打不上时直接报错
 退出，绝不带着半合入的核心继续构建——这时需要人工把该补丁重排到新版
@@ -15,6 +17,11 @@
 
 注意：跑完后 `git status` 会显示 upstream/ 有修改，这是正常的构建态，
 不要在 upstream/ 里提交；下次构建会先还原再重打。
+
+上游架构说明（2026-11-12 起）：上游已把 15 个官方站源搬进独立 Go 包
+native/sources，并移入私有仓库。本仓改为自带 fork/sources/ 站源包
+（取自上游 62fb9d4 公开可见的 native/sources/），红果出品方功能在这个
+站源包里实现；core 只保留协议与承载字段的最小改动。
 """
 
 import shutil
@@ -26,7 +33,10 @@ from pathlib import Path
 root = Path(__file__).resolve().parents[1]
 upstream = root / 'upstream'
 core = upstream / 'native' / 'core'
+native = upstream / 'native'
+sources = native / 'sources'
 fork_dir = root / 'fork'
+fork_sources = fork_dir / 'sources'
 
 
 def run(args, **kwargs):
@@ -85,8 +95,27 @@ def main():
                     f'补丁打不上：{source.name}，上游改了同处代码，'
                     '请人工重排该补丁后再构建（不要强行跳过）。')
             run(['git', '-C', str(upstream), 'apply', str(patch)])
+    # 5. 用本仓的站源包覆盖上游的 native/sources/。
+    #    上游已把官方站源移入私有仓库，公开仓库只剩 sources_example；
+    #    本仓自带 fork/sources/ 保证站源可用且构建可复现。
+    #    逐文件覆盖而不是整目录删除：这样重复运行不会误删，
+    #    也避免删掉上游目录里本仓没有的文件。
+    count = 0
+    if fork_sources.is_dir():
+        sources.mkdir(parents=True, exist_ok=True)
+        for source in sorted(fork_sources.glob('*.go')):
+            shutil.copy2(source, sources / source.name)
+        count = len(list(sources.glob('*.go')))
+    # 6. 生成 go.work 与 bridge/sources_gen.go，接入本仓的站源包。
+    #    这两处上游不入库（上游 .gitignore 已忽略），每次构建重生成。
+    (native / 'go.work').write_text(
+        'go 1.24.1\n\nuse (\n\t.\n)\n', encoding='utf-8')
+    (native / 'bridge' / 'sources_gen.go').write_text(
+        'package main\n\nimport (\n\t_ "duanjuapp/native/sources"\n)\n',
+        encoding='utf-8')
     print(f'fork 覆盖层已合入：{len(patched)} 个补丁，'
-          f'{len(list((fork_dir / "core").glob("*.go")))} 个新增文件。')
+          f'{len(list((fork_dir / "core").glob("*.go")))} 个新增文件，'
+          f'{count} 个站源文件。')
 
 
 if __name__ == '__main__':

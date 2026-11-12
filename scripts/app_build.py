@@ -15,11 +15,19 @@ class BuildVariant:
 
     @property
     def flutter_arguments(self):
-        return ['--dart-define=ALL_SOURCES=' + str(self.all_sources).lower()]
+        return ['--dart-define=APP_FLAVOR=' + self.slug]
+
+    @property
+    def go_arguments(self):
+        # 上游自 8e277f8 起把版本开关从 linker 变量 buildAllSources 改成
+        # Go build tag（hongguojian / zhenguojian），站源包里的 flavor_*.go
+        # 按 tag 决定注册哪些站源。旧的 -X .../core.buildAllSources=true
+        # 在新上游已无对应变量，传了也不生效。
+        return ['-tags=' + self.slug]
 
     @property
     def linker_flags(self):
-        return '-s -w -X duanjuapp/native/core.buildAllSources=' + str(self.all_sources).lower()
+        return '-s -w'
 
 
 def add_variant_argument(parser):

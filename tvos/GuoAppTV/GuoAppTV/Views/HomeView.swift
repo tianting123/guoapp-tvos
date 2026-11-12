@@ -133,7 +133,7 @@ struct HomeView: View {
     private var sourceRow: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 12) {
-                ForEach(SourceSite.available(allSources: appState.allSources)) { site in
+                ForEach(appState.availableSites) { site in
                     TVChip(title: site.name, isSelected: site.id == appState.selectedSource) {
                         // 切到红果默认展开榜单，其他站源默认全部。
                         selectedCategory = site.id == "hongguo" ? Self.rankingCategoryId : ""

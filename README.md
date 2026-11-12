@@ -28,14 +28,28 @@
 
 - **Go 核心**：`upstream/` 是上游仓库 [Xanerix/guoapp](https://github.com/Xanerix/guoapp)
   的 **git submodule**，Go 核心在 `upstream/native/`，当前指向 commit
-  `283cd16`（`feat: 红果分集带出横竖屏标记`）。本仓与上游共享 Go 核心与
-  `DuanjuRequest` JSON 协议。
+  `0b48331`（1.0.9+109）。本仓与上游共享 Go 核心与 `DuanjuRequest` JSON 协议。
 - **播放协议**：播放地址、解密密钥等由 Go 核心通过 JSON 协议提供。
-- **本地核心改动**：`fork/` 是本仓对上游核心的覆盖层（出品方功能：解析
-  列表/搜索载荷的 `copyright`、新增 `producerWorks` 动作等），构建时由
-  `scripts/build_tvos.py` 先跑 `scripts/apply_fork_overlay.py` 合入
+- **站源包**：上游已把 15 个官方站源搬进独立 Go 包 `native/sources`，并移入
+  **私有仓库**（公开仓库只剩不联网的示例站源）。本仓自带 `fork/sources/`
+  站源包（取自上游 `62fb9d4` 公开可见的 `native/sources/`，53 个文件），
+  构建时覆盖上游的 `native/sources/`，保证站源可用且构建可复现，不依赖
+  上游的私有站源仓库。
+- **本地核心改动**：`fork/` 是本仓对上游核心的覆盖层，分两部分：
+  - `fork/sources/`：站源包。红果出品方功能在这里实现
+    （`provider_hongguo_producer.go`：解析搜索/列表载荷的 `copyright`、
+    按出品方精确过滤片单、用网页详情补上线日期）。
+  - `fork/patches/`：对 core 的最小改动 —— `Drama` / `LibraryDrama` 增加
+    `Producer` 字段、`nativeDispatch` 增加 `producerDramas` 与
+    `producerWorks` 两个动作。出品方能力通过可选接口 `ProducerProvider`
+    由站源实现，core 不内置任何具体站源逻辑。
+
+  构建时由 `scripts/build_tvos.py` 先跑 `scripts/apply_fork_overlay.py` 合入
   submodule 工作区；补丁打不上构建直接失败，需人工重排到新版上游。
   不要直接改 `upstream/` 里的文件。
+- **版本开关**：上游已移除旧的 linker 变量 `core.buildAllSources`，改用 Go
+  build tag `hongguojian` / `zhenguojian`（由站源包里的 `flavor_*.go`
+  决定注册哪些站源）。构建脚本按版本传 `-tags=<版本名>`。
 
 ### 同步上游核心
 
@@ -97,7 +111,11 @@ python3 scripts/build_tvos.py [--all-sources]
 | --- | --- |
 | `tvos/` | Apple TV 原生应用（SwiftUI + Go 核心 + MPVKit） |
 | `upstream/` | 上游仓库 git submodule，Go 核心在 `upstream/native/`（见上文「与上游共享的部分」） |
+| `fork/sources/` | 本仓自带的站源包（覆盖上游 `native/sources/`），含红果出品方实现 |
+| `fork/patches/` | 对上游 core 的最小补丁（`Producer` 字段与两个 action） |
+| `fork/core/` | 新增到上游 core 的文件（出品方能力桥接） |
 | `scripts/build_tvos.py` | 构建脚本：先编 Go 核心为 xcframework，再用 xcodebuild 出包 |
+| `scripts/apply_fork_overlay.py` | 把 `fork/` 的改动合入 submodule 工作区（幂等） |
 | `.github/workflows/build.yml` | CI：构建两个版本并发布 Release |
 | `VERSION` | 版本号 |
 | `CHANGELOG.md` | 更新日志 |
