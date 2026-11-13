@@ -227,6 +227,37 @@ actor CoreClient {
         return PlaybackPlan(dict: data)
     }
 
+    /// 预热播放：让核心先把视频数据拉进本地代理缓存，再开始播放。
+    ///
+    /// 核心的 preload 动作（native/core/app_preload.go）会解析播放地址，
+    /// 并把最多 4MB 的视频数据预热进本地流代理。返回的 plan 就是可直接
+    /// 播放的地址（同样是本地代理地址）。
+    ///
+    /// 为什么需要：mpv 打开一个网络流时从 0 字节开始拉，弱网下缓冲
+    /// 很容易耗尽，表现为画面一顿一顿。先预热过，播放器一开始就有
+    /// 数据在手，缓冲中断会少很多。上游 Dart 端在播放前与切集时都做
+    /// 同样的预热。
+    func preload(drama: Drama, episode: Episode, quality: Int = 0) async throws -> PlaybackPlan {
+        let data = try await call([
+            "action": "preload",
+            "drama": drama.requestJSON(),
+            "chapter": episode.raw,
+            "index": episode.number,
+            "quality": quality,
+            // preload 走核心的「读」通道：必须带 session（同一 scope 共用一个），
+            // 且 sequence 要全局递增，否则核心会以「请求标记无效」拒绝。
+            "session": readSession(scope: "preload"),
+            "sequence": nextSequence(),
+        ])
+        return PlaybackPlan(dict: data)
+    }
+
+    /// 读通道的 session 标识：格式必须是「归属者:范围」，字符集限
+    /// 字母数字与 - _ : . ，否则核心不认。
+    private func readSession(scope: String) -> String {
+        "guoapp-tv:\(scope)"
+    }
+
     /// 当前线路失败时向核心要下一条线路。
     func fallback(plan: PlaybackPlan) async throws -> PlaybackPlan {
         let data = try await call([
@@ -251,6 +282,98 @@ actor CoreClient {
     func release(session: String) async throws {
         guard !session.isEmpty else { return }
         _ = try await call(["action": "release", "session": session])
+    }
+
+    /// 查询站源的设备注册状态。返回 true 表示已就绪。
+    ///
+    /// 红果需要先注册设备号才能拿到播放签名；没注册时解析会失败。
+    /// 核心的 sourceDevices 对不支持设备注册的站源直接返回 ready=true。
+    func sourceDevicesReady(source: String) async throws -> Bool {
+        let data = try await call(["action": "sourceDevices", "source": source])
+        return (data["ready"] as? NSNumber)?.boolValue ?? (data["ready"] as? Bool) ?? false
+    }
+
+    /// 注册站源设备。返回 true 表示注册成功。
+    func registerSourceDevices(source: String) async throws -> Bool {
+        let data = try await call([
+            "action": "sourceDevices",
+            "source": source,
+            "command": "register",
+        ])
+        return (data["ready"] as? NSNumber)?.boolValue ?? (data["ready"] as? Bool) ?? false
+    }
+
+    // MARK: - 站源账号
+
+    /// 查询站源账号状态。
+    func sourceAccountStatus(source: String) async throws -> SourceAccountStatus {
+        let data = try await call([
+            "action": "sourceAccount",
+            "source": source,
+        ])
+        return SourceAccountStatus(dict: data)
+    }
+
+    /// 取站源登录用的滑块验证码。
+    func sourceAccountCaptcha(source: String) async throws -> SourceCaptcha {
+        let data = try await call([
+            "action": "sourceAccount",
+            "source": source,
+            "command": "captcha",
+        ])
+        return SourceCaptcha(dict: data)
+    }
+
+    /// 用账号密码与滑块轨迹登录。
+    func sourceAccountLogin(
+        source: String,
+        identifier: String,
+        password: String,
+        captchaID: String,
+        track: CaptchaTrack
+    ) async throws -> SourceAccountStatus {
+        let data = try await call([
+            "action": "sourceAccount",
+            "source": source,
+            "command": "login",
+            "account": [
+                "identifier": identifier,
+                "password": password,
+                "captchaId": captchaID,
+                "track": track.dictionary,
+            ],
+        ])
+        return SourceAccountStatus(dict: data)
+    }
+
+    /// 退出站源账号。
+    func sourceAccountLogout(source: String) async throws -> SourceAccountStatus {
+        let data = try await call([
+            "action": "sourceAccount",
+            "source": source,
+            "command": "logout",
+        ])
+        return SourceAccountStatus(dict: data)
+    }
+
+    // MARK: - 代理设置
+
+    /// 读取核心当前的资源设置（代理模式与地址）。
+    func resourceSettings() async throws -> ResourceSettings {
+        let data = try await call(["action": "resourceSettings"])
+        return ResourceSettings(dict: data)
+    }
+
+    /// 保存代理设置。mode 取值：auto（自动读系统代理）/ direct（直连）/ manual（手动）。
+    func saveResourceSettings(mode: String, proxyURL: String) async throws -> ResourceSettings {
+        let data = try await call([
+            "action": "saveResourceSettings",
+            "settings": [
+                "proxyMode": mode,
+                "proxyUrl": proxyURL,
+            ],
+        ])
+        return ResourceSettings(dict: data)
     }
 
     /// 取消正在进行的解析（与 Dart 侧行为一致，sequence 递增）。

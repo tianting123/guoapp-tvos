@@ -12,6 +12,13 @@ private func intValue(_ dict: [String: Any], _ key: String) -> Int {
     return 0
 }
 
+private func boolValue(_ dict: [String: Any], _ key: String) -> Bool {
+    if let number = dict[key] as? NSNumber { return number.boolValue }
+    if let flag = dict[key] as? Bool { return flag }
+    if let text = dict[key] as? String { return text == "true" || text == "1" }
+    return false
+}
+
 private func stringList(_ dict: [String: Any], _ key: String) -> [String] {
     (dict[key] as? [Any] ?? []).compactMap { $0 as? String }
 }
@@ -255,20 +262,44 @@ struct SourceSite: Identifiable, Hashable {
     let id: String
     let name: String
     let description: String
+    /// 该站源需要先注册设备（如红果：注册设备号才能拿到播放签名）。
+    let requiresDeviceRegistration: Bool
+    /// 该站源需要账号登录（如青空次元：登录后才能播放）。
+    let requiresAccount: Bool
+    /// 该站源有 VIP 提示（上游 core 标记 SkipVIPPrompt 的反面）。
+    let hasVIPPrompt: Bool
 
-    init(id: String, name: String, description: String) {
+    init(
+        id: String,
+        name: String,
+        description: String,
+        requiresDeviceRegistration: Bool = false,
+        requiresAccount: Bool = false,
+        hasVIPPrompt: Bool = false
+    ) {
         self.id = id
         self.name = name
         self.description = description
+        self.requiresDeviceRegistration = requiresDeviceRegistration
+        self.requiresAccount = requiresAccount
+        self.hasVIPPrompt = hasVIPPrompt
     }
 
     /// 核心 `initialize` 返回的站源条目（Go 侧 nativeSourceInfo）。
+    ///
+    /// 核心除了 id / name / description，还会给出该站源支持哪些能力：
+    /// devices（需设备注册）、account（需账号登录）、vipPrompt。
+    /// 这三个字段之前没接，界面因此不知道哪个源要登录或注册，
+    /// 用户只会看到「播放失败」而不知道该做什么。
     init?(dict: [String: Any]) {
         let identifier = stringValue(dict, "id")
         guard !identifier.isEmpty else { return nil }
         id = identifier
         name = stringValue(dict, "name").isEmpty ? identifier : stringValue(dict, "name")
         description = stringValue(dict, "description")
+        requiresDeviceRegistration = boolValue(dict, "devices")
+        requiresAccount = boolValue(dict, "account")
+        hasVIPPrompt = boolValue(dict, "vipPrompt")
     }
 
     /// 与 Dart 侧 SourceSite.knownValues 对齐。

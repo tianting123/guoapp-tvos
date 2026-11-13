@@ -77,13 +77,20 @@ final class DanmakuEngine {
             fetchPage(from: positionMs, end: endMs, plan: plan)
         }
         guard let page else { return }
+        // 只看本页条目，不要遍历整个已显示集合：
+        // 已显示集合最多 2000 条，每秒全量扫描一次纯属浪费。
+        var hasNew = false
         for item in page.items where !shown.contains(item.id) && item.timeMs >= positionMs
             && item.timeMs < positionMs + 1000
         {
             shown.insert(item.id)
             overlay?.emit(text: item.text)
+            hasNew = true
         }
-        if shown.count > 2000 { shown.removeAll() }
+        // 只有真的播出了新弹幕才需要维护集合；否则让它自然增长到上限再清空。
+        if hasNew, shown.count > 2000 {
+            shown.removeAll()
+        }
     }
 
     private func fetchPage(from positionMs: Int, end endMs: Int, plan: PlaybackPlan) {
@@ -163,6 +170,16 @@ private struct MpvWakeupContext {
 /// 而密钥随内容变化，复用句柄无法换密钥。
 @MainActor
 final class PlayerController: NSObject, ObservableObject {
+    /// 硬解模式。默认 videotoolbox-copy（兼容性好），可在设置里改成
+    /// videotoolbox（零拷贝，理论更低延迟但兼容性差）。
+    static var hardwareDecoder: String {
+        switch UserDefaults.standard.string(forKey: "hardwareDecoder") {
+        case "videotoolbox": return "videotoolbox"
+        case "no": return "no"
+        default: return "videotoolbox-copy"
+        }
+    }
+
     @Published var progress = PlaybackProgress(position: 0, duration: 0)
     @Published var endedToken = 0
     @Published var failedToken = 0
@@ -293,13 +310,40 @@ final class PlayerController: NSObject, ObservableObject {
         _ = mpv_set_option_string(handle, "vo", "gpu-next")
         _ = mpv_set_option_string(handle, "gpu-api", "vulkan")
         _ = mpv_set_option_string(handle, "gpu-context", "moltenvk")
-        _ = mpv_set_option_string(handle, "hwdec", "videotoolbox")
+        // 硬解默认用 videotoolbox-copy：
+        // 后者是零拷贝（解码表面直接交给渲染管线），要靠 Metal/MoltenVK 的
+        // 外部纹理互操作，而 mpv 官方文档写着 VideoToolbox 的 direct 模式
+        // 「受 Metal/MoltenVK 限制，生产环境优先 copy」；零拷贝在 tvOS 上还
+        // 容易撞上黑屏与撕裂。上游 Dart 端在 iOS / macOS 用的也是
+        // videotoolbox-copy。设置里可切回零拷贝试。
+        _ = mpv_set_option_string(handle, "hwdec", PlayerController.hardwareDecoder)
         _ = mpv_set_option_string(handle, "subs-match-os-language", "yes")
         _ = mpv_set_option_string(handle, "subs-fallback", "yes")
         _ = mpv_set_option_string(handle, "video-rotate", "no")
         if start > 0 {
             _ = mpv_set_option_string(handle, "start", "\(start)")
         }
+        // 播放性能相关。默认值来自 mpv v0.41 源码（options/options.c 与
+        // demux_cache_conf），这里逐项对照过，改的都是真正影响「卡卡的」那些。
+        //
+        // cache-pause-wait（默认 1 秒）—— 卡顿的主因。
+        //   缓冲耗尽时 mpv 会暂停，等缓存里攒够这么多秒的数据才恢复播放。
+        //   默认只等 1 秒，网络一抖动就恢复、马上又断，画面就成了一顿一顿。
+        //   放到 5 秒：宁可多等一下，也要一次恢复到位。
+        _ = mpv_set_option_string(handle, "cache-pause-wait", "5")
+        // cache-secs（默认 5 秒）—— 往播放头前方预读多少秒。
+        //   电视网络抖动比手机网明显，攒 30 秒的余量更抗断。
+        _ = mpv_set_option_string(handle, "cache-secs", "30")
+        // cache（默认 auto）—— 显式打开网络缓存，auto 对本地文件行为不明确。
+        _ = mpv_set_option_string(handle, "cache", "yes")
+        // framedrop（默认 no）—— 解码跟不上时丢帧，而不是让画面越拖越慢。
+        //   上游在 Android 侧用同样的设置，电视端同样适用。
+        _ = mpv_set_option_string(handle, "framedrop", "vo")
+        // demuxer-max-bytes 默认已是 150MiB，够用，保持默认不改。
+        // video-sync 保持默认的 audio：moltenvk 的 vsync 本身就不稳
+        //（mpv 维护者原话），改成 display 反而更容易掉帧。
+        // 解码线程数按设备核数给满：万一硬解回退到软解，帧率才撑得住。
+        _ = mpv_set_option_string(handle, "vd-lavc-threads", "\(max(2, ProcessInfo.processInfo.activeProcessorCount))")
         // 与 iOS 端 player_screen.dart 一致的 demuxer 选项：重试、实验特性、
         // 扩展名、协议白名单（local 与否的分支与 iOS 相同）、解密密钥。
         // 注意：不要用 mpv 自身的 decryption-key 选项——在此构建下它不生效
@@ -423,12 +467,36 @@ final class PlayerController: NSObject, ObservableObject {
         updateDebugInfo(position: position, duration: duration)
     }
 
+    /// 诊断面板是否打开。关闭时不生成诊断文本，也不再逐秒去问 mpv 要属性。
+    ///
+    /// 之前不管面板开没开，每秒都读 5 个 mpv 属性并拼字符串：
+    /// mpv_get_property_string 会跨线程加锁取内核状态，主线程每秒做 5 次
+    /// 是白白的开销，弱网时更会跟解码抢 CPU。面板关闭时直接跳过。
+    var diagnosticsEnabled = false {
+        didSet {
+            if diagnosticsEnabled {
+                // 刚打开就立刻刷新一次，不用等下一个心跳。
+                refreshDebugInfo()
+            } else {
+                debugInfo = ""
+            }
+        }
+    }
+
     /// 每秒刷新诊断面板：状态、编码、硬解、解密、播放地址。
     private func updateDebugInfo(position: Double, duration: Double) {
+        guard diagnosticsEnabled else { return }
+        refreshDebugInfo(position: position, duration: duration)
+    }
+
+    /// 立即重建一次诊断文本（面板打开时或刚打开时调用）。
+    private func refreshDebugInfo(position: Double? = nil, duration: Double? = nil) {
         guard mpv != nil else {
             debugInfo = "无播放器"
             return
         }
+        let position = position ?? getDouble("time-pos")
+        let duration = duration ?? getDouble("duration")
         var lines: [String] = []
         let paused = getFlag("pause")
         let buffering = getFlag("paused-for-cache")
@@ -644,13 +712,24 @@ struct PlayerView: View {
                 VStack(spacing: 28) {
                     TVStatusView(
                         icon: "exclamationmark.triangle.fill",
-                        title: "播放失败",
+                        title: errorNeedsLogin ? "需要登录" : "播放失败",
                         message: error,
                         expands: false
                     )
                     HStack(spacing: 20) {
-                        TVPrimaryButton(title: "重试", icon: "arrow.clockwise") {
-                            Task { await load() }
+                        if errorNeedsLogin {
+                            // 核心报「站源需要登录」时，直接给出登录入口，
+                            // 免得用户看到一句报错却不知道该去哪里。
+                            TVPrimaryButton(title: "去登录", icon: "person.badge.key") {
+                                dismiss()
+                                NotificationCenter.default.post(
+                                    name: .openSourceAccount, object: nil
+                                )
+                            }
+                        } else {
+                            TVPrimaryButton(title: "重试", icon: "arrow.clockwise") {
+                                Task { await load() }
+                            }
                         }
                         TVSecondaryButton(title: "返回", icon: "chevron.left") {
                             dismiss()
@@ -665,7 +744,12 @@ struct PlayerView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color.black.ignoresSafeArea())
         .task {
+            // 诊断面板开关同步给播放器：关闭时播放器不再逐秒去问 mpv 要属性。
+            controller.diagnosticsEnabled = diagnosticsEnabled
             await load()
+        }
+        .onChange(of: diagnosticsEnabled) { enabled in
+            controller.diagnosticsEnabled = enabled
         }
         .onChange(of: controller.endedToken) { token in
             guard token > 0 else { return }
@@ -696,6 +780,15 @@ struct PlayerView: View {
         }
     }
 
+    /// 错误是不是「该站源需要登录」。
+    ///
+    /// 核心用 SourceLoginError 报这类错（provider_registry.go），文案里带
+    /// 「登录」二字；这里据此判断是否给出「去登录」按钮。
+    private var errorNeedsLogin: Bool {
+        guard let error else { return false }
+        return error.contains("登录")
+    }
+
     private func load() async {
         guard currentIndex < episodes.count else {
             dismiss()
@@ -717,6 +810,9 @@ struct PlayerView: View {
             // 预取失败过：直接走正常解析（不重试预取）。
         }
         do {
+            // 播放当前集直接解析：核心的 preload 会真的去拉数据（实测 6 秒以上），
+            // 放在播放前会让打开剧集白等好几秒，反而更卡。
+            // 预热留给「下一集」，在后台慢慢做（见 maybePrefetchNext）。
             let resolved = try await CoreClient.shared.resolve(
                 drama: drama, episode: episode, quality: preferredQuality
             )
@@ -801,9 +897,19 @@ struct PlayerView: View {
         let episode = episodes[nextIndex]
         prefetchTask = Task {
             defer { prefetchTask = nil }
-            guard let plan = try? await CoreClient.shared.resolve(
+            // 用 preload 而不是 resolve：除了解析地址，还把视频数据预热进
+            // 本地代理缓存。切集时播放器一上来就有数据，衔接不再卡。
+            // preload 会真的去拉数据（实测 6 秒以上），所以只在后台做，
+            // 不放在播放当前集之前（那会让打开剧集白等好几秒）。
+            var plan = try? await CoreClient.shared.preload(
                 drama: drama, episode: episode, quality: preferredQuality
-            ) else { return }
+            )
+            if plan == nil {
+                plan = try? await CoreClient.shared.resolve(
+                    drama: drama, episode: episode, quality: preferredQuality
+                )
+            }
+            guard let plan else { return }
             // 解析完成时若用户已不在触发那集（已切集/已退出），
             // 预取的计划用不上，释放其会话避免泄漏。
             guard !Task.isCancelled, currentIndex + 1 == nextIndex else {

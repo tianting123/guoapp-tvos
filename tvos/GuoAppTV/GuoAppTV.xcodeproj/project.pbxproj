@@ -20,6 +20,9 @@
 		A10000000000000000000034 /* NTLM.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000033 /* NTLM.swift */; };
 		A10000000000000000000036 /* Hashing.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000035 /* Hashing.swift */; };
 		A10000000000000000000038 /* StorageSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000037 /* StorageSettingsView.swift */; };
+		A10000000000000000020001 /* SourceAccount.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000020000 /* SourceAccount.swift */; };
+		A10000000000000000020003 /* SliderCaptchaView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000020002 /* SliderCaptchaView.swift */; };
+		A10000000000000000020005 /* SourceAccountView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000020004 /* SourceAccountView.swift */; };
 		A10000000000000000000045 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000025 /* ContentView.swift */; };
 		A10000000000000000000046 /* HomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000026 /* HomeView.swift */; };
 		A10000000000000000000047 /* SearchView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000027 /* SearchView.swift */; };
@@ -50,6 +53,9 @@
 		A10000000000000000000033 /* NTLM.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NTLM.swift; sourceTree = "<group>"; };
 		A10000000000000000000035 /* Hashing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Hashing.swift; sourceTree = "<group>"; };
 		A10000000000000000000037 /* StorageSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StorageSettingsView.swift; sourceTree = "<group>"; };
+		A10000000000000000020000 /* SourceAccount.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SourceAccount.swift; sourceTree = "<group>"; };
+		A10000000000000000020002 /* SliderCaptchaView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SliderCaptchaView.swift; sourceTree = "<group>"; };
+		A10000000000000000020004 /* SourceAccountView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SourceAccountView.swift; sourceTree = "<group>"; };
 		A10000000000000000000025 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		A10000000000000000000026 /* HomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeView.swift; sourceTree = "<group>"; };
 		A10000000000000000000027 /* SearchView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchView.swift; sourceTree = "<group>"; };
@@ -117,6 +123,7 @@
 				A10000000000000000000019 /* SMBStore.swift */,
 				A10000000000000000000033 /* NTLM.swift */,
 				A10000000000000000000035 /* Hashing.swift */,
+				A10000000000000000020000 /* SourceAccount.swift */,
 			);
 			path = Core;
 			sourceTree = "<group>";
@@ -136,6 +143,8 @@
 				A10000000000000000000051 /* HistoryView.swift */,
 				A10000000000000000000054 /* TVDesign.swift */,
 				A10000000000000000000037 /* StorageSettingsView.swift */,
+				A10000000000000000020002 /* SliderCaptchaView.swift */,
+				A10000000000000000020004 /* SourceAccountView.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -234,6 +243,9 @@
 				A10000000000000000000034 /* NTLM.swift in Sources */,
 				A10000000000000000000036 /* Hashing.swift in Sources */,
 				A10000000000000000000038 /* StorageSettingsView.swift in Sources */,
+				A10000000000000000020001 /* SourceAccount.swift in Sources */,
+				A10000000000000000020003 /* SliderCaptchaView.swift in Sources */,
+				A10000000000000000020005 /* SourceAccountView.swift in Sources */,
 				A10000000000000000000045 /* ContentView.swift in Sources */,
 				A10000000000000000000046 /* HomeView.swift in Sources */,
 				A10000000000000000000047 /* SearchView.swift in Sources */,
@@ -287,7 +299,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 2.48;
+				MARKETING_VERSION = 2.49;
 				ONLY_ACTIVE_ARCH = YES;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
@@ -326,7 +338,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 2.48;
+				MARKETING_VERSION = 2.49;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-Wl,-u,_DuanjuRequest",

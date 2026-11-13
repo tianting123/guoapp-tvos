@@ -14,14 +14,26 @@ struct SettingsView: View {
     @AppStorage("playbackDiagnostics") private var diagnosticsEnabled = false
     @AppStorage("preferredQuality") private var preferredQuality = 0
     @AppStorage("playbackSpeed") private var playbackSpeed = 1.0
+    @AppStorage("hardwareDecoder") private var hardwareDecoder = "videotoolbox-copy"
 
     @State private var activePicker: ActivePicker?
     @State private var showStorage = false
+    @State private var showAccounts = false
 
     /// 弹窗选择的类别。
     private enum ActivePicker: String, Identifiable {
-        case quality, speed
+        case quality, speed, decoder
         var id: String { rawValue }
+    }
+
+    /// 硬解模式选项。默认 videotoolbox-copy。
+    private static let decoderOptions = ["videotoolbox-copy", "videotoolbox", "no"]
+    private static func decoderLabel(_ value: String) -> String {
+        switch value {
+        case "videotoolbox": return "零拷贝（兼容性较差）"
+        case "no": return "关闭硬解"
+        default: return "拷贝（推荐）"
+        }
     }
 
     /// 清晰度选项：与 iOS 端一致，0 = 自动 · 优先高清。
@@ -52,6 +64,13 @@ struct SettingsView: View {
             .navigationDestination(isPresented: $showStorage) {
                 StorageSettingsView()
                     .environmentObject(store)
+            }
+            .navigationDestination(isPresented: $showAccounts) {
+                SourceAccountView()
+                    .environmentObject(appState)
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .openSourceAccount)) { _ in
+                showAccounts = true
             }
         }
     }
@@ -85,6 +104,25 @@ struct SettingsView: View {
                     }
                 }
             }
+            // 有站源需要登录或注册设备时才显示这个入口。
+            if appState.availableSites.contains(where: { $0.requiresAccount || $0.requiresDeviceRegistration }) {
+                TVSettingDivider()
+                TVSettingRow {
+                    showAccounts = true
+                } label: {
+                    HStack {
+                        Text("站源账号")
+                            .font(.system(size: 24, weight: .medium))
+                        Spacer()
+                        Text("登录与设备注册")
+                            .font(.system(size: 20))
+                            .foregroundColor(TVTheme.textSecondary)
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 19, weight: .semibold))
+                            .foregroundColor(TVTheme.textTertiary)
+                    }
+                }
+            }
         }
     }
 
@@ -106,7 +144,11 @@ struct SettingsView: View {
                 activePicker = .speed
             }
             TVSettingDivider()
-            Text("清晰度与倍速在下一次打开剧集时生效。")
+            TVValueRow(title: "硬件解码", value: Self.decoderLabel(hardwareDecoder)) {
+                activePicker = .decoder
+            }
+            TVSettingDivider()
+            Text("清晰度、倍速与硬件解码在下一次打开剧集时生效。画面卡顿时可先试「拷贝（推荐）」，不行再换零拷贝。")
                 .font(.system(size: 18))
                 .foregroundColor(TVTheme.textTertiary)
                 .padding(.horizontal, 28)
@@ -199,6 +241,12 @@ struct SettingsView: View {
                 title: "播放倍速",
                 options: Self.speedOptions.map { TVOption(value: $0, label: String(format: "%.2fx", $0)) },
                 selection: $playbackSpeed
+            )
+        case .decoder:
+            TVOptionSheet(
+                title: "硬件解码",
+                options: Self.decoderOptions.map { TVOption(value: $0, label: Self.decoderLabel($0)) },
+                selection: $hardwareDecoder
             )
         }
     }
