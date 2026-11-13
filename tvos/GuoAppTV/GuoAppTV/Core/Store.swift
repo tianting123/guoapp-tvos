@@ -35,7 +35,7 @@ final class AppState: ObservableObject {
     }
 }
 
-// MARK: - 追剧 / 观看进度（本地持久化）
+// MARK: - 追剧 / 观看进度
 
 struct WatchProgress: Codable, Equatable {
     var drama: Drama
@@ -53,40 +53,47 @@ struct FollowedDrama: Codable, Equatable {
     var followedAt: Date
 }
 
-private struct PersistedState: Codable {
-    var follows: [FollowedDrama] = []
-    var progress: [WatchProgress] = []
-}
+// MARK: - 存储协调
 
+/// 追剧与进度的存储协调者。
+///
+/// tvOS 真机上只有 Caches 与 tmp 可写，系统在空间不足（以及应用不运行时）
+/// 会清理 Caches，所以本地副本不可靠。这里把状态同时写本地与远端：
+/// - 本地：读写都快，离线可用，作为缓存；
+/// - 远端（SMB / WebDAV）：真正持久的那一份。
+///
+/// 启动时优先读远端：远端有数据就用远端（覆盖可能被清理掉的本地副本）；
+/// 远端不可用则退回本地，保证应用照常能开。
 @MainActor
 final class Store: ObservableObject {
     @Published private(set) var follows: [FollowedDrama] = []
     @Published private(set) var progress: [WatchProgress] = []
+    /// 远端后端最近一次操作的结果，用于在设置页提示。
+    @Published private(set) var remoteStatus: String = ""
+    @Published private(set) var remoteIsHealthy = true
 
-    private let file: URL
+    private let local: LocalStorageBackend
+    private let settingsStore: StorageSettingsStore
+    private var remote: StorageBackend?
+    /// 远端同步的防抖任务：进度每 5 秒落一次盘，不必每次都同步远端。
+    private var syncTask: Task<Void, Never>?
+    /// 远端同步的最小间隔。
+    private static let syncDelay: Duration = .seconds(3)
 
-    init() {
-        // 与核心目录同理：tvOS 真机上 Application Support 只读，
-        // 追剧与进度存在 Caches，系统可能在存储不足时回收。
-        let directory = FileManager.default.urls(
-            for: .cachesDirectory, in: .userDomainMask
-        ).first ?? FileManager.default.temporaryDirectory
-        file = directory.appendingPathComponent("tv-state.json")
-        load()
+    init(
+        local: LocalStorageBackend = LocalStorageBackend(),
+        settingsStore: StorageSettingsStore = StorageSettingsStore()
+    ) {
+        self.local = local
+        self.settingsStore = settingsStore
+        // 远端状态先按本地初始化，随后异步拉远端覆盖。
+        if let state = local.loadSync() {
+            follows = state.follows
+            progress = state.progress
+        }
     }
 
-    private func load() {
-        guard let data = try? Data(contentsOf: file) else { return }
-        guard let state = try? JSONDecoder().decode(PersistedState.self, from: data) else { return }
-        follows = state.follows
-        progress = state.progress
-    }
-
-    private func persist() {
-        let state = PersistedState(follows: follows, progress: progress)
-        guard let data = try? JSONEncoder().encode(state) else { return }
-        try? data.write(to: file, options: .atomic)
-    }
+    // MARK: - 状态
 
     func isFollowing(_ drama: Drama) -> Bool {
         follows.contains { $0.drama.id == drama.id }
@@ -141,5 +148,152 @@ final class Store: ObservableObject {
     func deleteHistory(for drama: Drama) {
         progress.removeAll { $0.drama.id == drama.id }
         persist()
+    }
+
+    // MARK: - 持久化
+
+    private var currentState: PersistedState {
+        PersistedState(follows: follows, progress: progress, updatedAt: Date())
+    }
+
+    /// 写本地；远端同步延后合并，避免每次进度落盘都等一次网络往返。
+    private func persist() {
+        let state = currentState
+        try? local.saveSync(state)
+        guard remote != nil else { return }
+        syncTask?.cancel()
+        syncTask = Task { [weak self] in
+            try? await Task.sleep(for: Self.syncDelay)
+            guard !Task.isCancelled, let self, let backend = self.remote else { return }
+            await self.syncToRemote(backend, state: state)
+        }
+    }
+
+    /// 启动时拉远端状态：有就用远端覆盖本地（远端才是持久的那份）。
+    func bootstrapRemote() async {
+        let backend = makeRemoteBackend()
+        guard let backend else {
+            remoteStatus = "未配置远端存储"
+            remoteIsHealthy = true
+            return
+        }
+        remote = backend
+        do {
+            if let state = try await backend.load() {
+                // 远端比本地新才覆盖，避免旧副本盖掉刚在本地记的进度。
+                if let localState = local.loadSync(), localState.updatedAt > state.updatedAt {
+                    remoteStatus = "本地记录更新，未覆盖"
+                    remoteIsHealthy = true
+                    return
+                }
+                follows = state.follows
+                progress = state.progress
+                remoteStatus = "已从远端恢复 \(state.follows.count) 个追剧、\(state.progress.count) 条进度"
+                remoteIsHealthy = true
+            } else {
+                remoteStatus = "远端暂无数据"
+                remoteIsHealthy = true
+            }
+        } catch {
+            remoteStatus = error.localizedDescription
+            remoteIsHealthy = false
+        }
+    }
+
+    /// 立刻把当前状态推到远端（设置页的「立即备份」）。
+    func backupNow() async {
+        guard let backend = remote ?? makeRemoteBackend() else {
+            remoteStatus = "未配置远端存储"
+            remoteIsHealthy = false
+            return
+        }
+        remote = backend
+        await syncToRemote(backend, state: currentState)
+    }
+
+    /// 从远端拉回并覆盖本地（设置页的「从远端恢复」）。
+    func restoreNow() async {
+        guard let backend = remote ?? makeRemoteBackend() else {
+            remoteStatus = "未配置远端存储"
+            remoteIsHealthy = false
+            return
+        }
+        remote = backend
+        do {
+            guard let state = try await backend.load() else {
+                remoteStatus = "远端暂无数据"
+                return
+            }
+            follows = state.follows
+            progress = state.progress
+            try? local.saveSync(state)
+            remoteStatus = "已恢复 \(state.follows.count) 个追剧、\(state.progress.count) 条进度"
+            remoteIsHealthy = true
+        } catch {
+            remoteStatus = error.localizedDescription
+            remoteIsHealthy = false
+        }
+    }
+
+    /// 测试远端连接。
+    func testConnection() async -> String {
+        guard let backend = makeRemoteBackend() else {
+            remoteStatus = "未配置远端存储"
+            remoteIsHealthy = false
+            return remoteStatus
+        }
+        remote = backend
+        do {
+            if let smb = backend as? SMBStore {
+                _ = try await smb.probe()
+            } else if let webdav = backend as? WebDAVStore {
+                _ = try await webdav.probe()
+            }
+            remoteStatus = "连接成功"
+            remoteIsHealthy = true
+        } catch {
+            remoteStatus = error.localizedDescription
+            remoteIsHealthy = false
+        }
+        return remoteStatus
+    }
+
+    private func syncToRemote(_ backend: StorageBackend, state: PersistedState) async {
+        do {
+            try await backend.save(state)
+            remoteStatus = "已备份到远端"
+            remoteIsHealthy = true
+        } catch {
+            remoteStatus = "备份失败：\(error.localizedDescription)"
+            remoteIsHealthy = false
+        }
+    }
+
+    /// 按当前配置构造远端后端。
+    func makeRemoteBackend() -> StorageBackend? {
+        let settings = settingsStore.settings
+        switch settings.kind {
+        case .local:
+            return nil
+        case .smb:
+            guard !settings.smbHost.isEmpty, !settings.smbShare.isEmpty else { return nil }
+            return SMBStore(
+                host: settings.smbHost,
+                port: settings.smbPort,
+                share: settings.smbShare,
+                directory: settings.smbDirectory,
+                username: settings.smbUsername,
+                password: settingsStore.smbPassword(),
+                domain: settings.smbDomain
+            )
+        case .webdav:
+            guard let url = URL(string: settings.webdavURL), !settings.webdavURL.isEmpty else { return nil }
+            return WebDAVStore(
+                baseURL: url,
+                fileName: settings.webdavFileName,
+                username: settings.webdavUsername,
+                password: settingsStore.webdavPassword()
+            )
+        }
     }
 }

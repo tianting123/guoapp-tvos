@@ -1,0 +1,669 @@
+import Foundation
+import Network
+
+/// SMB2 客户端：tvOS 没有现成的 SMB API，只能自己实现最小可用的那部分。
+///
+/// 支持的流程：NEGOTIATE → SESSION_SETUP（NTLMv2）→ TREE_CONNECT →
+/// CREATE → READ / WRITE → CLOSE。够用来读写共享目录里的一个状态文件。
+///
+/// 只做 SMB 2.0.2 / 2.1，不支持 SMB1、不支持加密、不支持多通道。
+final class SMB2Client {
+    private let host: String
+    private let port: Int
+    private let username: String
+    private let password: String
+    private let domain: String
+
+    private var connection: NWConnection?
+    private var sessionId: UInt64 = 0
+    private var treeId: UInt32 = 0
+    /// 消息 ID：第一条请求用 0，之后每条递增 1。
+    ///
+    /// 实测群晖会拒绝 MessageId 从 1 开始的连接（直接断开），必须从 0 起。
+    private var messageId: UInt64 = 0
+    /// 服务端在 NEGOTIATE 响应里给出的会话密钥与签名算法。
+    private var sessionKey: [UInt8] = []
+    private var signingRequired = false
+    /// 服务端选中的方言版本。
+    private var serverDialect: UInt16 = 0
+
+    init(host: String, port: Int, username: String, password: String, domain: String = "") {
+        self.host = host
+        self.port = port
+        self.username = username
+        self.password = password
+        self.domain = domain
+    }
+
+    // MARK: - 连接
+
+    /// 建立连接并完成认证。
+    func connect() async throws {
+        try await openConnection()
+        try await negotiate()
+        try await sessionSetup()
+    }
+
+    /// 断开连接。
+    func disconnect() {
+        connection?.cancel()
+        connection = nil
+        sessionId = 0
+        treeId = 0
+    }
+
+    /// 建立 TCP 连接。
+    private func openConnection() async throws {
+        let parameters = NWParameters.tcp
+        parameters.prohibitExpensivePaths = false
+        let endpoint = NWEndpoint.hostPort(
+            host: NWEndpoint.Host(host),
+            port: NWEndpoint.Port(rawValue: UInt16(port)) ?? 445
+        )
+        let connection = NWConnection(to: endpoint, using: parameters)
+        self.connection = connection
+
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            // 用一次性门闩保证 continuation 只恢复一次：状态回调可能被多次触发
+            // （如 .ready 之后又 .failed），重复恢复会崩。用线程安全的引用计数，
+            // 避免在并发闭包里捕获并修改 var（Swift 6 下是错误）。
+            let gate = ContinuationGate(continuation)
+            connection.stateUpdateHandler = { state in
+                switch state {
+                case .ready:
+                    gate.resume()
+                case .failed(let error):
+                    gate.resume(throwing: error)
+                case .cancelled:
+                    gate.resume(throwing: SMBError.connectionClosed)
+                default:
+                    break
+                }
+            }
+            connection.start(queue: DispatchQueue(label: "app.duanju.smb"))
+        }
+    }
+
+    // MARK: - NEGOTIATE
+
+    private func negotiate() async throws {
+        // MS-SMB2 2.2.3.1 NEGOTIATE Request。
+        //
+        // 布局（少一个字段服务端就会直接断开）：
+        // 0 StructureSize · 2 DialectCount · 4 SecurityMode · 8 Capabilities
+        // 12 ClientGuid(16) · 28 ContextOffset(4)+ContextCount(2)+Reserved2(2)
+        // 36 Dialects[]，之后是 negotiate context。
+        // 声明 0x0311 就必须带 context（预认证完整性哈希 + 加密能力）。
+        var body = [UInt8](repeating: 0, count: 36)
+        body[0] = 0x24   // StructureSize = 36
+        body[2] = 0x05   // DialectCount = 5
+        body[4] = 0x01   // SecurityMode: signing enabled
+        body[8] = 0x40   // Capabilities = SMB2_GLOBAL_CAP_ENCRYPTION
+        // ClientGuid：必须是合法的 RFC 4122 UUID（版本 4），服务端会校验格式。
+        var guid = (0..<16).map { _ in UInt8.random(in: 0...255) }
+        guid[6] = (guid[6] & 0x0f) | 0x40
+        guid[8] = (guid[8] & 0x3f) | 0x80
+        for index in 0..<16 {
+            body[12 + index] = guid[index]
+        }
+        // dialect 数组从偏移 36 开始
+        for dialect in SMB2.supportedDialects {
+            body.append(UInt8(dialect & 0xff))
+            body.append(UInt8((dialect >> 8) & 0xff))
+        }
+        // dialect 之后补齐到 8 字节对齐，再放 negotiate context
+        while body.count % 8 != 0 {
+            body.append(0xff)
+        }
+        let contextStart = body.count
+        // ContextOffset 相对 SMB2 报文头起点（含 64 字节头），差 64 字节就找不到 context
+        let contextOffset = UInt32(SMB2.headerSize + contextStart)
+        body[28] = UInt8(contextOffset & 0xff)
+        body[29] = UInt8((contextOffset >> 8) & 0xff)
+        body[30] = UInt8((contextOffset >> 16) & 0xff)
+        body[31] = UInt8((contextOffset >> 24) & 0xff)
+        body[32] = 0x02  // ContextCount = 2
+
+        // Context 1：PREAUTH_INTEGRITY_CAPABILITIES
+        //   HashAlgorithmCount=1 · HashAlgorithms=SHA-512 · Salt=32 字节随机
+        let salt = (0..<32).map { _ in UInt8.random(in: 0...255) }
+        var preauth = [UInt8]()
+        preauth.append(0x01)
+        preauth.append(0x00)
+        preauth.append(0x20)
+        preauth.append(0x00)
+        preauth.append(0x01)
+        preauth.append(0x00)
+        preauth.append(contentsOf: salt)
+        body.append(0x01)
+        body.append(0x00)
+        body.append(UInt8(preauth.count & 0xff))
+        body.append(UInt8((preauth.count >> 8) & 0xff))
+        body.append(0x00)
+        body.append(0x00)
+        body.append(0x00)
+        body.append(0x00)
+        body.append(contentsOf: preauth)
+        while body.count % 8 != 0 {
+            body.append(0xff)
+        }
+
+        // Context 2：ENCRYPTION_CAPABILITIES（CipherCount=1 · AES-128-GCM）
+        body.append(0x02)
+        body.append(0x00)
+        body.append(0x04)
+        body.append(0x00)
+        body.append(0x00)
+        body.append(0x00)
+        body.append(0x00)
+        body.append(0x00)
+        body.append(0x01)
+        body.append(0x00)
+        body.append(0x01)
+        body.append(0x00)
+
+        let response = try await send(
+            command: SMB2.commandNEGOTIATE,
+            body: body,
+            treeId: 0,
+            sessionId: 0
+        )
+        guard response.header.command == SMB2.commandNEGOTIATE else {
+            throw SMBError.unexpectedResponse
+        }
+        let status = response.status
+        guard status == 0 else { throw SMBError.status(status) }
+        // NEGOTIATE 响应结构（MS-SMB2 2.2.3.2）：
+        // 0 StructureSize(65) · 2 SecurityMode(2) · 4 DialectRevision(2)
+        // 6 NegotiateContextCount/Reserved(2) · 8 ServerGuid(16)
+        // 24 Capabilities(4) · 28 MaxTransact(4) · 32 MaxRead(4)
+        // 36 MaxWrite(4) · 40 SystemTime(8) · 48 ServerStartTime(8)
+        // 56 SecurityBufferOffset(2) · 58 SecurityBufferLength(2)
+        // 相对报文头起点，SecurityMode 在 64+2=66，DialectRevision 在 68。
+        let responseBytes = [UInt8](response.data)
+        if responseBytes.count >= 66 {
+            let mode = UInt16(responseBytes[66]) | (UInt16(responseBytes[67]) << 8)
+            signingRequired = (mode & 0x0001) != 0
+        }
+        if responseBytes.count >= 70 {
+            let dialect = UInt16(responseBytes[68]) | (UInt16(responseBytes[69]) << 8)
+            serverDialect = dialect
+        }
+        #if DEBUG
+        print("[SMB2] NEGOTIATE 成功：方言 0x\(String(serverDialect, radix: 16))，要求签名 \(signingRequired)")
+        #endif
+    }
+
+    // MARK: - SESSION_SETUP（NTLMv2）
+
+    private func sessionSetup() async throws {
+        // 第一步：发送 NEGOTIATE 类型的 NTLMSSP 消息
+        let negotiateMessage = NTLM.negotiateMessage(domain: domain, workstation: "TV")
+        // SMB2_SESSION_SETUP 的结构体是 25 字节，但 SecurityBufferOffset/Length
+        // 在偏移 60/62，所以结构至少要 64 字节。
+        // MS-SMB2 2.2.5.1 SESSION_SETUP Request：
+        // 0 StructureSize(25) · 2 Flags · 3 SecurityMode · 4 Capabilities(4)
+        // 8 Channel(4) · 12 SecurityBufferOffset(2) · 14 SecurityBufferLength(2)
+        // 16 PreviousSessionId(8) · 24 对齐填充 · 88 SecurityBuffer
+        var firstBody = [UInt8](repeating: 0, count: 88)
+        firstBody[0] = 0x19  // StructureSize = 25
+        firstBody[2] = 0x00  // Flags
+        firstBody[3] = 0x01  // SecurityMode = SMB2_NEGOTIATE_SIGNING_ENABLED
+        // SecurityBufferOffset = 88（64 字节头 + 24 字节结构体）
+        firstBody[12] = 0x58
+        firstBody[13] = 0x00
+        firstBody[14] = UInt8(SMB2.ntlmsspOID.count & 0xff)
+        firstBody[15] = UInt8((SMB2.ntlmsspOID.count >> 8) & 0xff)
+        firstBody.append(contentsOf: SMB2.ntlmsspOID)
+        firstBody.append(contentsOf: negotiateMessage)
+
+        let first = try await send(
+            command: SMB2.commandSESSION_SETUP,
+            body: firstBody,
+            treeId: 0,
+            sessionId: 0
+        )
+        // 服务端可能直接返回成功（无认证）
+        if first.status == 0 {
+            sessionId = first.header.sessionId
+            return
+        }
+        guard first.status == 0xc0000016 else { throw SMBError.status(first.status) }
+        // 从响应里取出 NTLM 挑战
+        let firstBytes = [UInt8](first.data)
+        let payload = firstBytes.count > 64 ? Array(firstBytes[64...]) : []
+        guard let challenge = NTLM.parseChallenge(payload) else {
+            throw SMBError.authenticationFailed
+        }
+
+        // 第二步：发送 NTLM 认证消息
+        let clientChallenge = (0..<8).map { _ in UInt8.random(in: 0...255) }
+        let authenticate = NTLM.authenticateMessage(
+            domain: domain,
+            username: username,
+            password: password,
+            serverChallenge: challenge.serverChallenge,
+            targetInfo: challenge.targetInfo,
+            clientChallenge: clientChallenge
+        )
+        // 第二步：带 NTLM 认证消息，同样 88 字节结构 + SecurityBuffer
+        var secondBody = [UInt8](repeating: 0, count: 88)
+        secondBody[0] = 0x19
+        secondBody[3] = 0x01  // SecurityMode = signing enabled
+        secondBody[12] = 0x58
+        secondBody[13] = 0x00
+        secondBody[14] = UInt8(SMB2.ntlmsspOID.count & 0xff)
+        secondBody[15] = UInt8((SMB2.ntlmsspOID.count >> 8) & 0xff)
+        secondBody.append(contentsOf: SMB2.ntlmsspOID)
+        secondBody.append(contentsOf: authenticate)
+
+        let second = try await send(
+            command: SMB2.commandSESSION_SETUP,
+            body: secondBody,
+            treeId: 0,
+            sessionId: first.header.sessionId
+        )
+        guard second.status == 0 else {
+            if second.status == 0xc000006a || second.status == 0xc0000064 {
+                throw SMBError.authenticationFailed
+            }
+            throw SMBError.status(second.status)
+        }
+        sessionId = second.header.sessionId
+        // 解析会话密钥（若服务端下发）
+        let secondBytes = [UInt8](second.data)
+        if secondBytes.count > 64 {
+            let payload = Array(secondBytes[64...])
+            // SessionKey 在响应结构偏移 12（Length）+ 16（Offset）
+            if payload.count >= 20 {
+                let keyLength = Int(UInt16(payload[12]) | (UInt16(payload[13]) << 8))
+                let keyOffset = Int(UInt16(payload[16]) | (UInt16(payload[17]) << 8))
+                if keyLength > 0, payload.count >= keyOffset + keyLength {
+                    sessionKey = Array(payload[keyOffset..<(keyOffset + keyLength)])
+                }
+            }
+        }
+    }
+
+    // MARK: - TREE_CONNECT
+
+    /// 连接共享目录。
+    func connectShare(_ share: String) async throws {
+        let path = "\\\\\(host)\\\(share)"
+        var body = [UInt8](repeating: 0, count: 8)
+        body[0] = 0x09  // StructureSize = 9
+        body[2] = 0x00
+        body[3] = 0x00
+        body[4] = 0x00
+        body[5] = 0x00
+        // PathOffset = 9
+        body[6] = 0x09
+        body[7] = 0x00
+        // PathLength
+        let pathBytes = Array(path.utf16).flatMap { unit -> [UInt8] in
+            [UInt8(unit & 0xff), UInt8((unit >> 8) & 0xff)]
+        }
+        body.appendLE(UInt16(pathBytes.count))
+        body.append(contentsOf: pathBytes)
+
+        let response = try await send(
+            command: SMB2.commandTREE_CONNECT,
+            body: body,
+            treeId: 0,
+            sessionId: sessionId
+        )
+        guard response.status == 0 else {
+            if response.status == 0xc0000034 || response.status == 0xc00000cc {
+                throw SMBError.shareNotFound(share)
+            }
+            if response.status == 0xc000006a || response.status == 0xc0000064 {
+                throw SMBError.authenticationFailed
+            }
+            throw SMBError.status(response.status)
+        }
+        // TreeId 在响应头的偏移 36
+        let bytes = [UInt8](response.data)
+        guard bytes.count >= 40 else { throw SMBError.unexpectedResponse }
+        treeId = UInt32(bytes[36])
+            | (UInt32(bytes[37]) << 8)
+            | (UInt32(bytes[38]) << 16)
+            | (UInt32(bytes[39]) << 24)
+    }
+
+    // MARK: - 文件读写
+
+    /// 打开（若不存在则创建）一个文件，返回文件句柄。
+    func openFile(_ path: String, forWriting: Bool) async throws -> UInt64 {
+        // MS-SMB2 2.2.13.1 CREATE Request：
+        // 0 StructureSize(57) · 2 SecurityFlags · 4 DesiredAccess
+        // 8 FileAttributes · 12 ShareAccess · 16 CreateOptions
+        // 20 CreateDisposition · 24 Reserved · 28 CreateDuration
+        // 32 Reserved2 · 48 CreateContextsOffset/Length · 56 BufferOffset
+        // 58 BufferLength，缓冲区从 60（=64 头 + 56 结构体）开始。
+        var body = [UInt8](repeating: 0, count: 56)
+        body[0] = 0x39  // StructureSize = 57
+        body.appendLE(SMB2.accessReadWrite)      // DesiredAccess
+        body.appendLE(SMB2.fileAttributesNormal) // FileAttributes
+        body.appendLE(SMB2.shareReadWrite)       // ShareAccess
+        body.appendLE(SMB2.createOptions)        // CreateOptions
+        body.appendLE(UInt32(0x03))               // CreateDisposition = 不存在则创建
+        // BufferOffset = 120（相对报文头起点）
+        body.appendLE(UInt16(120))
+        let nameBytes = Array(path.utf16).flatMap { unit -> [UInt8] in
+            [UInt8(unit & 0xff), UInt8((unit >> 8) & 0xff)]
+        }
+        body.appendLE(UInt16(nameBytes.count))    // BufferLength
+        body.append(contentsOf: nameBytes)
+
+        let response = try await send(
+            command: SMB2.commandCREATE,
+            body: body,
+            treeId: treeId,
+            sessionId: sessionId
+        )
+        if response.status == 0xc0000034 {
+            throw SMBError.fileNotFound(path)
+        }
+        guard response.status == 0 else {
+            throw SMBError.status(response.status)
+        }
+        // FileId 在响应结构偏移 64+8 = 72（8 字节 Persistent + 8 字节 Volatile）
+        // CREATE 响应：FileId 在响应结构偏移 8（Persistent 8 字节 + Volatile 8 字节），
+        // 相对报文头起点是 64 + 8 = 72。
+        let bytes = [UInt8](response.data)
+        guard bytes.count >= 88 else { throw SMBError.unexpectedResponse }
+        var fileId: UInt64 = 0
+        for index in 0..<8 {
+            fileId |= UInt64(bytes[72 + index]) << UInt64(8 * index)
+        }
+        return fileId
+    }
+
+    /// 关闭文件句柄。
+    func closeFile(_ fileId: UInt64) async throws {
+        // MS-SMB2 2.2.15.1 CLOSE Request：
+        // 0 StructureSize(25) · 2 Flags · 4 Reserved · 8 FileId(16)
+        var body = [UInt8](repeating: 0, count: 24)
+        body[0] = 0x19  // StructureSize = 25
+        body.appendLE(fileId)
+        _ = try await send(command: SMB2.commandCLOSE, body: body, treeId: treeId, sessionId: sessionId)
+    }
+
+    /// 读文件内容。
+    func readFile(_ fileId: UInt64, length: Int) async throws -> Data {
+        // MS-SMB2 2.2.19.1 READ Request：
+        // 0 StructureSize(49) · 2 Padding · 4 Flags · 8 FileId(16)
+        // 24 MinimumCount · 28 Channel · 32 RemainingBytes · 36 Offset
+        // 44 Length · 48 BufferOffset/Length
+        var body = [UInt8](repeating: 0, count: 48)
+        body[0] = 0x31  // StructureSize = 49
+        body.appendLE(fileId)                     // FileId（16 字节）
+        body.appendLE(UInt32(0))                  // MinimumCount
+        body.appendLE(UInt32(0))                  // Channel
+        body.appendLE(UInt32(0))                  // RemainingBytes
+        body.appendLE(UInt64(0))                  // Offset
+        body.appendLE(UInt32(length))             // Length
+        body.appendLE(UInt16(0))                  // BufferOffset（未用缓冲）
+        body.appendLE(UInt16(0))                  // BufferLength
+
+        let response = try await send(
+            command: SMB2.commandREAD,
+            body: body,
+            treeId: treeId,
+            sessionId: sessionId
+        )
+        // STATUS_END_OF_FILE 不算错误
+        if response.status == 0xc0000011 {
+            return Data()
+        }
+        guard response.status == 0 else {
+            throw SMBError.status(response.status)
+        }
+        // DataOffset 在结构偏移 12（偏移 64+12 = 76）
+        // READ 响应：DataOffset 在结构偏移 12（=64+12=76），DataLength 在 14。
+        let bytes = [UInt8](response.data)
+        guard bytes.count >= 80 else { return Data() }
+        let dataOffset = Int(UInt16(bytes[76]) | (UInt16(bytes[77]) << 8))
+        let dataLength = Int(UInt16(bytes[78]) | (UInt16(bytes[79]) << 8))
+        guard bytes.count >= dataOffset + dataLength else { return Data() }
+        return Data(bytes[dataOffset..<(dataOffset + dataLength)])
+    }
+
+    /// 写文件内容（从偏移 0 开始，覆盖写）。
+    func writeFile(_ fileId: UInt64, data: Data) async throws {
+        // MS-SMB2 2.2.23.1 WRITE Request：
+        // 0 StructureSize(49) · 2 DataOffset(2) · 4 Length(4) · 8 Offset(8)
+        // 16 FileId(16) · 32 Channel(4) · 36 RemainingBytes(4) · 40 WriteChannelInfo
+        // 44 Flags(4)，数据从 112（=64 头 + 48 结构体）开始。
+        var body = [UInt8](repeating: 0, count: 48)
+        body[0] = 0x31  // StructureSize = 49
+        body.appendLE(UInt16(112))               // DataOffset
+        body.appendLE(UInt32(data.count))         // Length
+        body.appendLE(UInt64(0))                  // Offset
+        body.appendLE(fileId)                     // FileId（16 字节）
+        body.appendLE(UInt32(0))                  // Channel
+        body.appendLE(UInt32(0))                  // RemainingBytes
+        body.append(contentsOf: data)
+
+        let response = try await send(
+            command: SMB2.commandWRITE,
+            body: body,
+            treeId: treeId,
+            sessionId: sessionId
+        )
+        guard response.status == 0 else {
+            throw SMBError.status(response.status)
+        }
+    }
+
+    // MARK: - 收发
+
+    /// SMB 响应。
+    private struct Response {
+        var header: SMB2Header
+        var status: UInt32
+        var data: Data
+    }
+
+    /// 发一条请求并等响应。
+    private func send(command: UInt16, body: [UInt8], treeId: UInt32, sessionId: UInt64) async throws -> Response {
+        guard connection != nil else { throw SMBError.notConnected }
+        let currentMessageId = messageId
+        messageId &+= 1
+        // Flags：请求里一律置 0。签名能力由 NEGOTIATE 的 SecurityMode 声明，
+        // 不是靠 Flags —— 设了 SMB2_FLAGS_SIGNING_ENABLED(0x02) 这类旧标志
+        // 反而会被服务端当作未知位而直接断开连接。
+        let header = SMB2Header(command: command, messageId: currentMessageId, credits: 0, flags: 0)
+        // SMB2 头偏移 60-63 的 BodyLength：请求里填 0。
+        // 群晖等 NAS 在 NEGOTIATE 阶段会校验这个字段，非 0 会被直接断开连接
+        // （实测 impacket 与 Python 参考实现都是 0）。
+        var message = header.encoded(bodyLength: 0)
+        message.append(contentsOf: body)
+        // NetBIOS over TCP：4 字节长度前缀（1 字节类型 0x00 + 3 字节大端长度）。
+        // 必须带长度前缀，否则服务端无法确定报文边界，会直接断开连接。
+        var packet = [UInt8](repeating: 0, count: 4)
+        let messageLength = UInt32(message.count)
+        packet[1] = UInt8((messageLength >> 16) & 0xff)
+        packet[2] = UInt8((messageLength >> 8) & 0xff)
+        packet[3] = UInt8(messageLength & 0xff)
+        packet.append(contentsOf: message)
+
+        #if DEBUG
+        print("[SMB2] 发送 \(packet.count) 字节: " + packet.prefix(48).map { String(format: "%02x", $0) }.joined(separator: " "))
+        #endif
+        try await sendRaw(packet)
+
+        // 读响应。
+        // 有些服务端（如群晖的 445 端口）会在客户端发包之前先主动发一个
+        // SMB1 的多协议协商邀请（NT LMSSP negotiate），那不是我们要的响应，
+        // 跳过它继续读，直到拿到真正的 SMB2 报文。
+        var raw = Data()
+        for _ in 0..<8 {
+            raw = try await receiveRaw()
+            if raw.count >= 4, Array(raw.prefix(4)) == SMB2.protocolIdentifier {
+                break
+            }
+            #if DEBUG
+            print("[SMB2] 跳过非 SMB2 报文（\(raw.count) 字节）")
+            #endif
+        }
+        #if DEBUG
+        print("[SMB2] 收到 \(raw.count) 字节: " + raw.prefix(48).map { String(format: "%02x", $0) }.joined(separator: " "))
+        #endif
+        guard let parsed = SMB2Header(data: raw) else { throw SMBError.unexpectedResponse }
+        // 状态码在头偏移 8。用 [UInt8] 数组取值，不用 Data 的下标：
+        // Data 的索引起点不保证是 0（切片后会是 4），下标取值容易踩坑。
+        let rawBytes = [UInt8](raw)
+        guard rawBytes.count >= 12 else { throw SMBError.unexpectedResponse }
+        let status = UInt32(rawBytes[8]) | (UInt32(rawBytes[9]) << 8)
+            | (UInt32(rawBytes[10]) << 16) | (UInt32(rawBytes[11]) << 24)
+        let result = Response(header: parsed, status: status, data: raw)
+        return result
+    }
+
+    private func sendRaw(_ bytes: [UInt8]) async throws {
+        guard let connection else { throw SMBError.notConnected }
+        let content = Data(bytes)
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            connection.send(content: content, completion: .contentProcessed { error in
+                if let error {
+                    continuation.resume(throwing: error)
+                } else {
+                    continuation.resume()
+                }
+            })
+        }
+    }
+
+    /// 接收缓冲区：NWConnection 一次可能返回多个 SMB2 报文，剩余部分留在这里。
+    private var receiveBuffer = Data()
+
+    /// 收一个完整的 SMB2 报文。
+    ///
+    /// 注意：不能「先读 4 字节长度头，再读 body」—— NWConnection 的 receive
+    /// 会一次把能拿到的数据都返回，可能连带把后面的报文也取走。用一个
+    /// 缓冲区把多出来的字节留住，下一次从这里接着取。
+    private func receiveRaw() async throws -> Data {
+        // 缓冲区里已经有完整报文时直接切出来。
+        while true {
+            if let message = try extractMessageFromBuffer() {
+                return message
+            }
+            let chunk = try await receiveChunk(minimumBytes: 1)
+            #if DEBUG
+            print("[SMB2] 收到 \(chunk.count) 字节: " + chunk.prefix(24).map { String(format: "%02x", $0) }.joined(separator: " "))
+            #endif
+            guard !chunk.isEmpty else { throw SMBError.connectionClosed }
+            receiveBuffer.append(chunk)
+        }
+    }
+
+    /// 从缓冲区里切出一个完整报文（NetBIOS 长度前缀 + SMB2 内容）。
+    private func extractMessageFromBuffer() throws -> Data? {
+        guard receiveBuffer.count >= 4 else { return nil }
+        let bytes = [UInt8](receiveBuffer)
+        // NetBIOS over TCP：1 字节类型 + 3 字节大端长度。
+        var length = 0
+        if bytes[0] == 0 {
+            length = Int(bytes[1]) << 16 | Int(bytes[2]) << 8 | Int(bytes[3])
+        } else {
+            // 1 字节长度格式
+            length = Int(bytes[0])
+            if length > 0, receiveBuffer.count >= 1 + length {
+                let message = Data(receiveBuffer.prefix(1 + length).dropFirst(1))
+                receiveBuffer.removeFirst(1 + length)
+                return message
+            }
+            return nil
+        }
+        guard length > 0, length < 8 * 1024 * 1024 else {
+            throw SMBError.unexpectedResponse
+        }
+        guard receiveBuffer.count >= 4 + length else { return nil }
+        // 用 removeFirst 而不是 removeSubrange：Data 的索引起点不保证是 0，
+        // removeSubrange(0..<n) 在起点非 0 时会越界崩溃。
+        let message = Data(receiveBuffer.prefix(4 + length).dropFirst(4))
+        receiveBuffer.removeFirst(4 + length)
+        return message
+    }
+
+    /// 从连接上读一批数据。
+    private func receiveChunk(minimumBytes: Int) async throws -> Data {
+        guard let connection else { throw SMBError.notConnected }
+        return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Data, Error>) in
+            connection.receive(minimumIncompleteLength: minimumBytes, maximumLength: 65536) { data, _, _, error in
+                if let error {
+                    continuation.resume(throwing: error)
+                } else {
+                    continuation.resume(returning: data ?? Data())
+                }
+            }
+        }
+    }
+}
+
+/// 一次性 continuation 门闩：保证只恢复一次。
+///
+/// NWConnection 的状态回调可能被多次触发（.ready 之后又 .failed 等），
+/// 重复 resume continuation 会崩。这里用锁保证只恢复一次。
+private final class ContinuationGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<Void, Error>?
+    private var result: Result<Void, Error>?
+
+    init(_ continuation: CheckedContinuation<Void, Error>) {
+        self.continuation = continuation
+    }
+
+    /// 恢复（成功）。
+    func resume() {
+        finish(.success(()))
+    }
+
+    /// 恢复（失败）。
+    func resume(throwing error: Error) {
+        finish(.failure(error))
+    }
+
+    private func finish(_ value: Result<Void, Error>) {
+        lock.lock()
+        guard continuation != nil else {
+            lock.unlock()
+            return
+        }
+        let pending = continuation
+        continuation = nil
+        lock.unlock()
+        pending?.resume(with: value)
+    }
+}
+
+/// SMB 错误。
+enum SMBError: LocalizedError {
+    case notConnected
+    case connectionClosed
+    case unexpectedResponse
+    case authenticationFailed
+    case shareNotFound(String)
+    case fileNotFound(String)
+    case status(UInt32)
+
+    var errorDescription: String? {
+        switch self {
+        case .notConnected:
+            return "尚未连接到服务器"
+        case .connectionClosed:
+            return "连接被关闭"
+        case .unexpectedResponse:
+            return "服务器返回了无法识别的响应"
+        case .authenticationFailed:
+            return "认证失败，请检查用户名与密码"
+        case .shareNotFound(let name):
+            return "找不到共享「\(name)」"
+        case .fileNotFound(let path):
+            return "找不到文件 \(path)"
+        case .status(let code):
+            return "SMB 错误状态 0x\(String(code, radix: 16, uppercase: true))"
+        }
+    }
+}

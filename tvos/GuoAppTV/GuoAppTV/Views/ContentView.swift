@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ContentView: View {
     @EnvironmentObject private var appState: AppState
+    @EnvironmentObject private var store: Store
 
     var body: some View {
         ZStack {
@@ -12,12 +13,14 @@ struct ContentView: View {
                 // 用 UITabBarController 保持所有标签页存活：切标签不销毁视图，
                 // @State（滚动位置、已加载页数、选中分类/榜单）都保留，切回来秒开。
                 // SwiftUI 的 TabView 切走时会销毁视图，故改用本容器。
-                KeepAliveTabView(appState: appState)
+                KeepAliveTabView(appState: appState, store: store)
                     .ignoresSafeArea()
             }
         }
         .task {
             await appState.bootstrap()
+            // 核心起来后再拉远端：远端不可用也不影响应用启动。
+            await store.bootstrapRemote()
         }
     }
 
@@ -61,15 +64,16 @@ struct ContentView: View {
 /// 每个标签页包一层 UIHostingController，SwiftUI 视图的 @State 在切标签时保留。
 struct KeepAliveTabView: UIViewControllerRepresentable {
     var appState: AppState
+    var store: Store
 
     func makeUIViewController(context: Context) -> UITabBarController {
         let tabBarController = UITabBarController()
         tabBarController.viewControllers = [
             hosting(HomeView().environmentObject(appState), title: "首页", image: "house", tag: 0),
             hosting(SearchView().environmentObject(appState), title: "搜索", image: "magnifyingglass", tag: 1),
-            hosting(FollowingView().environmentObject(appState), title: "追剧", image: "bookmark", tag: 2),
-            hosting(HistoryView().environmentObject(appState), title: "最近观看", image: "clock", tag: 3),
-            hosting(SettingsView().environmentObject(appState), title: "设置", image: "gearshape", tag: 4),
+            hosting(FollowingView().environmentObject(appState).environmentObject(store), title: "追剧", image: "bookmark", tag: 2),
+            hosting(HistoryView().environmentObject(appState).environmentObject(store), title: "最近观看", image: "clock", tag: 3),
+            hosting(SettingsView().environmentObject(appState).environmentObject(store), title: "设置", image: "gearshape", tag: 4),
         ]
         return tabBarController
     }

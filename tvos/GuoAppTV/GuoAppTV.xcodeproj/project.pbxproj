@@ -12,6 +12,14 @@
 		A10000000000000000000042 /* Client.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000022 /* Client.swift */; };
 		A10000000000000000000043 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000023 /* Models.swift */; };
 		A10000000000000000000044 /* Store.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000024 /* Store.swift */; };
+		A10000000000000000000007 /* StorageBackend.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000000 /* StorageBackend.swift */; };
+		A10000000000000000000014 /* WebDAVStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000013 /* WebDAVStore.swift */; };
+		A10000000000000000000016 /* SMB2Protocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000015 /* SMB2Protocol.swift */; };
+		A10000000000000000000018 /* SMB2Client.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000017 /* SMB2Client.swift */; };
+		A10000000000000000000032 /* SMBStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000019 /* SMBStore.swift */; };
+		A10000000000000000000034 /* NTLM.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000033 /* NTLM.swift */; };
+		A10000000000000000000036 /* Hashing.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000035 /* Hashing.swift */; };
+		A10000000000000000000038 /* StorageSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000037 /* StorageSettingsView.swift */; };
 		A10000000000000000000045 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000025 /* ContentView.swift */; };
 		A10000000000000000000046 /* HomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000026 /* HomeView.swift */; };
 		A10000000000000000000047 /* SearchView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000027 /* SearchView.swift */; };
@@ -34,6 +42,14 @@
 		A10000000000000000000022 /* Client.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Client.swift; sourceTree = "<group>"; };
 		A10000000000000000000023 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
 		A10000000000000000000024 /* Store.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Store.swift; sourceTree = "<group>"; };
+		A10000000000000000000000 /* StorageBackend.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StorageBackend.swift; sourceTree = "<group>"; };
+		A10000000000000000000013 /* WebDAVStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebDAVStore.swift; sourceTree = "<group>"; };
+		A10000000000000000000015 /* SMB2Protocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SMB2Protocol.swift; sourceTree = "<group>"; };
+		A10000000000000000000017 /* SMB2Client.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SMB2Client.swift; sourceTree = "<group>"; };
+		A10000000000000000000019 /* SMBStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SMBStore.swift; sourceTree = "<group>"; };
+		A10000000000000000000033 /* NTLM.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NTLM.swift; sourceTree = "<group>"; };
+		A10000000000000000000035 /* Hashing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Hashing.swift; sourceTree = "<group>"; };
+		A10000000000000000000037 /* StorageSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StorageSettingsView.swift; sourceTree = "<group>"; };
 		A10000000000000000000025 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		A10000000000000000000026 /* HomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeView.swift; sourceTree = "<group>"; };
 		A10000000000000000000027 /* SearchView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchView.swift; sourceTree = "<group>"; };
@@ -94,6 +110,13 @@
 				A10000000000000000000022 /* Client.swift */,
 				A10000000000000000000023 /* Models.swift */,
 				A10000000000000000000024 /* Store.swift */,
+				A10000000000000000000000 /* StorageBackend.swift */,
+				A10000000000000000000013 /* WebDAVStore.swift */,
+				A10000000000000000000015 /* SMB2Protocol.swift */,
+				A10000000000000000000017 /* SMB2Client.swift */,
+				A10000000000000000000019 /* SMBStore.swift */,
+				A10000000000000000000033 /* NTLM.swift */,
+				A10000000000000000000035 /* Hashing.swift */,
 			);
 			path = Core;
 			sourceTree = "<group>";
@@ -112,6 +135,7 @@
 				A1000000000000000000002C /* PosterView.swift */,
 				A10000000000000000000051 /* HistoryView.swift */,
 				A10000000000000000000054 /* TVDesign.swift */,
+				A10000000000000000000037 /* StorageSettingsView.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -202,6 +226,14 @@
 				A10000000000000000000042 /* Client.swift in Sources */,
 				A10000000000000000000043 /* Models.swift in Sources */,
 				A10000000000000000000044 /* Store.swift in Sources */,
+				A10000000000000000000007 /* StorageBackend.swift in Sources */,
+				A10000000000000000000014 /* WebDAVStore.swift in Sources */,
+				A10000000000000000000016 /* SMB2Protocol.swift in Sources */,
+				A10000000000000000000018 /* SMB2Client.swift in Sources */,
+				A10000000000000000000032 /* SMBStore.swift in Sources */,
+				A10000000000000000000034 /* NTLM.swift in Sources */,
+				A10000000000000000000036 /* Hashing.swift in Sources */,
+				A10000000000000000000038 /* StorageSettingsView.swift in Sources */,
 				A10000000000000000000045 /* ContentView.swift in Sources */,
 				A10000000000000000000046 /* HomeView.swift in Sources */,
 				A10000000000000000000047 /* SearchView.swift in Sources */,
@@ -255,7 +287,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 2.47;
+				MARKETING_VERSION = 2.48;
 				ONLY_ACTIVE_ARCH = YES;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
@@ -294,7 +326,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 2.47;
+				MARKETING_VERSION = 2.48;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-Wl,-u,_DuanjuRequest",

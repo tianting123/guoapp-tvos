@@ -8,6 +8,7 @@ import SwiftUI
 /// 配置项与存储键（AppStorage）与原版完全一致。
 struct SettingsView: View {
     @EnvironmentObject private var appState: AppState
+    @EnvironmentObject private var store: Store
     @AppStorage("danmakuEnabled") private var danmakuEnabled = true
     @AppStorage("autoAdvance") private var autoAdvance = true
     @AppStorage("playbackDiagnostics") private var diagnosticsEnabled = false
@@ -15,6 +16,7 @@ struct SettingsView: View {
     @AppStorage("playbackSpeed") private var playbackSpeed = 1.0
 
     @State private var activePicker: ActivePicker?
+    @State private var showStorage = false
 
     /// 弹窗选择的类别。
     private enum ActivePicker: String, Identifiable {
@@ -37,6 +39,7 @@ struct SettingsView: View {
                 VStack(alignment: .leading, spacing: TVTheme.sectionSpacing) {
                     sourceGroup
                     playbackGroup
+                    storageGroup
                     aboutGroup
                 }
                 .padding(.horizontal, TVTheme.pageInset)
@@ -45,6 +48,10 @@ struct SettingsView: View {
             }
             .sheet(item: $activePicker) { picker in
                 pickerSheet(picker)
+            }
+            .navigationDestination(isPresented: $showStorage) {
+                StorageSettingsView()
+                    .environmentObject(store)
             }
         }
     }
@@ -107,6 +114,41 @@ struct SettingsView: View {
         }
     }
 
+    // MARK: - 存储
+
+    private var storageGroup: some View {
+        TVSettingGroup(title: "存储") {
+            TVSettingRow {
+                showStorage = true
+            } label: {
+                HStack {
+                    Text("追剧与进度")
+                        .font(.system(size: 24, weight: .medium))
+                    Spacer()
+                    Text(storageSummary)
+                        .font(.system(size: 20))
+                        .foregroundColor(TVTheme.textSecondary)
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 19, weight: .semibold))
+                        .foregroundColor(TVTheme.textTertiary)
+                }
+            }
+        }
+    }
+
+    /// 当前存储方式的一句话摘要。
+    private var storageSummary: String {
+        let settings = StorageSettingsStore().settings
+        switch settings.kind {
+        case .local:
+            return "仅本机缓存"
+        case .smb:
+            return "SMB 共享"
+        case .webdav:
+            return "WebDAV 备份"
+        }
+    }
+
     // MARK: - 关于
 
     private var aboutGroup: some View {
@@ -125,7 +167,7 @@ struct SettingsView: View {
             aboutNote("播放时按遥控器 ↑ 放慢、↓ 加快，可实时调整倍速。")
             aboutNote("“最近观看”中按遥控器“播放/暂停”键，可删除该观看记录。")
             aboutNote("“首页”按遥控器“播放/暂停”键，可手动刷新。")
-            aboutNote("追剧与观看进度存在 Caches，系统空间不足时可能被清理。")
+            aboutNote("追剧与观看进度默认存在本机缓存，系统空间不足时可能被清理；可在「存储」里改存到 NAS。")
         }
     }
 

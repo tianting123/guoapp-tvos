@@ -6,6 +6,7 @@ import re
 import shlex
 import shutil
 import subprocess
+import tempfile
 import sys
 import zipfile
 from pathlib import Path
@@ -25,22 +26,20 @@ def run(arguments, **kwargs):
 
 
 def remove_tree(directory):
-    """删除目录内容。逐个文件删，不做整目录批量删除：
-    某些受管环境会拦截大批量删除，整目录删不掉会让整个打包步骤失败，
-    只留下半个产物。"""
+    """删除目录内容。
+
+    用 shutil.rmtree 的 onerror 把所有错误吞掉：某些受管环境会拦截删除操作，
+    清理失败不该让整个打包步骤失败（产物已经生成好了）。
+    """
     if not directory.is_dir():
         return
-    for entry in sorted(directory.rglob('*'), key=lambda p: len(p.parts), reverse=True):
-        try:
-            if entry.is_symlink() or entry.is_file():
-                entry.unlink()
-            elif entry.is_dir():
-                entry.rmdir()
-        except OSError:
-            pass
+
+    def ignore_errors(func, path, exc_info):
+        return
+
     try:
-        directory.rmdir()
-    except OSError:
+        shutil.rmtree(directory, onerror=ignore_errors)
+    except Exception:
         pass
 
 
@@ -220,14 +219,12 @@ def main():
                 raise SystemExit('tvOS 包缺少 FFI 入口：' + symbol)
         # IPA 结构为 zip 内 Payload/GuoAppTV.app；Apple TV 需在 Mac 上用 Xcode
         # 签名后安装，未签名包不能直接在设备上安装。
-        payload = output / 'Payload'
-        if payload.exists():
-            remove_tree(payload)
-        # 残留目录删不掉时 mkdir 会报 FileExistsError，这里允许已存在。
+        # Payload 放在系统临时目录里：打包完不需要清理（系统会回收），
+        # 也避开了「删除大批文件」被受管环境拦截导致整个打包步骤失败。
+        staging = Path(tempfile.mkdtemp(prefix='tvos-ipa-'))
+        payload = staging / 'Payload'
         payload.mkdir(parents=True, exist_ok=True)
         target = payload / application.name
-        if target.exists():
-            remove_tree(target)
         shutil.copytree(application, target, symlinks=True)
         ipa = output / f'{variant.slug}-{version}-tvos-unsigned.ipa'
         if ipa.exists():
@@ -236,9 +233,9 @@ def main():
         # __MACOSX/ 目录（实测 206 个文件里有 118 个是这类冗余），Apple TV
         # 侧载用不上，白占体积。zip -r -X 直接跳过扩展属性与资源叉。
         run(['/usr/bin/zip', '-r', '-X', '-q', str(ipa), 'Payload'],
-            cwd=output)
+            cwd=staging)
         validate_package(ipa, 'Payload/GuoAppTV.app')
-        remove_tree(payload)
+        remove_tree(staging)
         artifacts.append(ipa)
     if not artifacts:
         raise SystemExit('未生成 tvOS 安装包。')

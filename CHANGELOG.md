@@ -26,6 +26,22 @@
 - 修复播放一会后 tvOS 屏保自动弹出：mpv 不是 AVPlayer，系统不知道在播视频；
   播放时禁止系统空闲计时器，暂停 / 停止 / 切后台时恢复。
 
+## 2.48
+
+- **新增远端存储**：追剧与观看进度不再只存在本机 Caches（tvOS 会在空间不足
+  或应用未运行时清理），可以存到 NAS。
+  - **SMB 共享**：自研 SMB2 客户端（tvOS 没有现成 SMB API），支持
+    NEGOTIATE / SESSION_SETUP（NTLMv2 认证）/ TREE_CONNECT / CREATE / READ /
+    WRITE / CLOSE，直连 NAS 的 445 端口读写共享目录里的状态文件。
+  - **WebDAV 备份**：用 URLSession 实现，支持 Basic 与 Digest 认证，可写到
+    群晖 Cloud Sync 的 WebDAV 端口。
+- **存储配置界面**：设置 → 追剧与进度 → 存储方式，可选本机缓存 / SMB 共享 /
+  WebDAV 备份，支持测试连接、立即备份、从远端恢复。密码存 Keychain，不落
+  UserDefaults。
+- 状态写入做了防抖（3 秒合并一次），远端不可用时静默降级到本机，不影响观看。
+- 上游同步到 `0b48331`（1.0.9+109），含 **#114 DNS 解析异常时改用 DoH
+  重连，修复部分电视盒和网络下红果设备注册失败**。
+
 ## 2.47
 
 - 同步上游核心到 Xanerix/guoapp `0b48331`（1.0.9+109），共 12 个提交。其中

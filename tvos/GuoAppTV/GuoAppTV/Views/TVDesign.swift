@@ -613,3 +613,100 @@ struct TVShelfRow<Cards: View>: View {
         }
     }
 }
+
+// MARK: - 文本输入
+
+/// 电视端文本输入行：标题 + 输入框。
+///
+/// tvOS 上没有 iOS 那种表单，文本框要自己适配遥控器：
+/// 行本身可聚焦（遥控器左右移动到这一行），点按后进入编辑态并把键盘焦点
+/// 交给真正的输入控件，此时系统弹出文本编辑面板；点「完成」收起。
+struct TVTextFieldRow: View {
+    let title: String
+    let placeholder: String
+    @Binding var text: String
+    var isSecure: Bool = false
+
+    /// 行焦点：遥控器导航用。
+    @FocusState private var rowFocused: Bool
+    /// 输入焦点：系统文本面板用。与行焦点是两回事。
+    @FocusState private var inputFocused: Bool
+    @State private var editing = false
+
+    var body: some View {
+        HStack(spacing: 16) {
+            Text(title)
+                .font(.system(size: 24, weight: .medium))
+                .frame(width: 190, alignment: .leading)
+            Group {
+                if editing {
+                    input
+                } else {
+                    display
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.horizontal, 28)
+        .padding(.vertical, 18)
+        .background(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(rowFocused ? TVTheme.surfaceBright : .clear)
+        )
+        .contentShape(Rectangle())
+        .focused($rowFocused)
+        .animation(TVTheme.focusAnimation, value: rowFocused)
+        .onChange(of: rowFocused) { isFocused in
+            // 失焦时收起编辑态，避免残留系统文本面板挡住界面。
+            // 用 tvOS 16 可用的单参数 onChange（部署目标是 tvOS 16）。
+            if !isFocused, !inputFocused {
+                editing = false
+            }
+        }
+    }
+
+    /// 未编辑时显示当前值或占位符。
+    private var display: some View {
+        HStack {
+            Text(text.isEmpty ? placeholder : text)
+                .font(.system(size: 22))
+                .foregroundColor(text.isEmpty ? TVTheme.textTertiary : TVTheme.textPrimary)
+                .lineLimit(1)
+            Spacer()
+            Image(systemName: "chevron.right")
+                .font(.system(size: 19, weight: .semibold))
+                .foregroundColor(TVTheme.textTertiary)
+        }
+        .contentShape(Rectangle())
+        .onTapGesture {
+            editing = true
+        }
+    }
+
+    /// 编辑态：真正的输入控件 + 完成按钮。
+    private var input: some View {
+        HStack(spacing: 16) {
+            Group {
+                if isSecure {
+                    SecureField("", text: $text)
+                } else {
+                    TextField("", text: $text)
+                }
+            }
+            .font(.system(size: 22))
+            .foregroundColor(TVTheme.textPrimary)
+            .tint(TVTheme.accent)
+            .focused($inputFocused)
+            Button("完成") {
+                inputFocused = false
+                editing = false
+            }
+            .font(.system(size: 20, weight: .medium))
+            .foregroundColor(TVTheme.accent)
+        }
+        .onAppear {
+            // 进入编辑态后把键盘焦点交给输入控件，系统才会弹文本面板。
+            DispatchQueue.main.async { inputFocused = true }
+        }
+    }
+}
