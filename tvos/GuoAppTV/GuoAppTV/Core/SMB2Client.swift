@@ -292,20 +292,24 @@ actor SMB2Client {
     /// 连接共享目录。
     func connectShare(_ share: String) async throws {
         let path = "\\\\\(host)\\\(share)"
+        // MS-SMB2 2.2.19.1 TREE_CONNECT Request（结构体 8 字节）：
+        // 0 StructureSize(9) · 2 Reserved(2) · 4 PathOffset(2) · 6 PathLength(2)
+        // 8 路径（UTF-16LE，不含结尾 null）
+        //
+        // ⚠️ PathOffset 是**相对整个 SMB2 报文起点**（含 64 字节头）的偏移，
+        // 必须是 64 + 8 = 72。之前误写成 9（且写进了偏移 6 的 PathLength 字段），
+        // 服务端会把报文头当成路径解析，返回 STATUS_INVALID_PARAMETER(0xC000000D)。
         var body = [UInt8](repeating: 0, count: 8)
         body[0] = 0x09  // StructureSize = 9
-        body[2] = 0x00
-        body[3] = 0x00
-        body[4] = 0x00
-        body[5] = 0x00
-        // PathOffset = 9
-        body[6] = 0x09
-        body[7] = 0x00
-        // PathLength
+        // 偏移 2-3：Reserved，保持 0
+        // 偏移 4-5：PathOffset = 64（头）+ 8（结构体）= 72
+        putLE(&body, 4, UInt16(SMB2.headerSize + 8))
+        // 路径字节
         let pathBytes = Array(path.utf16).flatMap { unit -> [UInt8] in
             [UInt8(unit & 0xff), UInt8((unit >> 8) & 0xff)]
         }
-        body.appendLE(UInt16(pathBytes.count))
+        // 偏移 6-7：PathLength
+        putLE(&body, 6, UInt16(pathBytes.count))
         body.append(contentsOf: pathBytes)
 
         let response = try await send(
@@ -335,6 +339,12 @@ actor SMB2Client {
     // MARK: - 文件读写
 
     /// 打开（若不存在则创建）一个文件，返回文件句柄。
+    ///
+    /// `forWriting` 决定 CreateDisposition：
+    /// - 读：OPEN(1) —— 文件不存在就报 STATUS_OBJECT_NAME_NOT_FOUND，
+    ///   调用方据此判断「远端还没有数据」；不能建成「不存在则创建」，
+    ///   否则读一个不存在的文件反而会把它创建出来，永远等不到 fileNotFound。
+    /// - 写：OVERWRITE_IF(4) —— 存在则截断重写，不存在则创建。
     func openFile(_ path: String, forWriting: Bool) async throws -> SMB2FileId {
         // MS-SMB2 2.2.13.1 CREATE Request（结构体 56 字节 + 文件名）：
         // 0  StructureSize(57) · 2 SecurityFlags(1) · 3 RequestedOplockLevel(1)
@@ -351,10 +361,10 @@ actor SMB2Client {
         }
         var body = [UInt8](repeating: 0, count: 56)
         body[0] = 0x39  // StructureSize = 57
-        putLE(&body, 24, SMB2.accessReadWrite)       // DesiredAccess
+        putLE(&body, 24, forWriting ? SMB2.accessReadWrite : SMB2.accessRead) // DesiredAccess
         putLE(&body, 28, SMB2.fileAttributesNormal)  // FileAttributes
         putLE(&body, 32, SMB2.shareReadWrite)        // ShareAccess
-        putLE(&body, 36, UInt32(0x03))               // CreateDisposition = 不存在则创建
+        putLE(&body, 36, forWriting ? SMB2.createOverwriteIf : SMB2.createOpen) // CreateDisposition
         putLE(&body, 40, SMB2.createOptions)         // CreateOptions
         putLE(&body, 44, UInt16(120))                // NameOffset
         putLE(&body, 46, UInt16(nameBytes.count))    // NameLength
@@ -515,10 +525,9 @@ actor SMB2Client {
         // 不是靠 Flags —— 设了 SMB2_FLAGS_SIGNING_ENABLED(0x02) 这类旧标志
         // 反而会被服务端当作未知位而直接断开连接。
         let header = SMB2Header(command: command, messageId: currentMessageId, credits: 0, flags: 0)
-        // SMB2 头偏移 60-63 的 BodyLength：请求里填 0。
-        // 群晖等 NAS 在 NEGOTIATE 阶段会校验这个字段，非 0 会被直接断开连接
-        // （实测 impacket 与 Python 参考实现都是 0）。
-        var message = header.encoded(bodyLength: 0)
+        // SMB2 头是固定 64 字节，偏移 48-63 是 Signature（16 字节），
+        // **没有 BodyLength 字段**（impacket 的 SMB2Packet 也证实）。
+        var message = header.encoded()
         message.append(contentsOf: body)
         // NetBIOS over TCP：4 字节长度前缀（1 字节类型 0x00 + 3 字节大端长度）。
         // 必须带长度前缀，否则服务端无法确定报文边界，会直接断开连接。

@@ -2,6 +2,26 @@
 
 每个版本一节，标题为 `VERSION` 中的完整版本号。发布工作流会把对应一节写入 GitHub Release 说明。
 
+## 2.53
+
+- **修 SMB 连接报「SMB 错误状态 0xC000000D」**：TREE_CONNECT 的 `PathOffset`
+  字段写错了位置 —— 规范要求它是**相对整个 SMB2 报文起点**（含 64 字节头）
+  的偏移，必须是 72；之前误写成了 9，而且写进了偏移 6 的 `PathLength` 字段，
+  导致 `PathOffset` 实际为 0。服务端把 SMB2 报文头当成共享路径解析，
+  返回 `STATUS_INVALID_PARAMETER (0xC000000D)`。
+  修复后与 impacket 生成的权威报文**逐字节一致**。
+- **修 SMB2 头的字段归属**：偏移 48-63 是 **Signature（16 字节）**，
+  SMB2 头里**并没有 BodyLength 字段**（impacket 的 `SMB2Packet` 亦然）。
+  之前把「各命令结构体的长度」写在了偏移 60-63，因为值恒为 0 而没暴露问题，
+  现在按规范改为整段签名区置 0。
+- **修读取时误创建文件**：`openFile` 的 `forWriting` 参数之前收了但完全没用，
+  读和写都用 `CreateDisposition = 不存在则创建` —— 于是读一个不存在的远端文件
+  反而会把它创建出来，「文件不存在」的分支永远走不到。
+  现在读用 `OPEN`（不存在报 `STATUS_OBJECT_NAME_NOT_FOUND`），
+  写用 `OVERWRITE_IF`（存在则截断重写）。
+- 已用 impacket 对 `TREE_CONNECT` / `CREATE` / `READ` / `WRITE` / `SET_INFO` /
+  `CLOSE` 逐字节比对，均完全一致。
+
 ## 2.52
 
 - **合并远端 redfruit 界面重构**：并入 2.47/2.48 那条线（推荐 hero 全屏流、

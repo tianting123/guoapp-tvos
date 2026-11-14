@@ -54,12 +54,25 @@ enum SMB2 {
     static let fileAttributesNormal: UInt32 = 0x80
     /// 访问权限：读 + 写 + 删除。
     static let accessReadWrite: UInt32 = 0x00000003
+    /// 访问权限：只读。
+    static let accessRead: UInt32 = 0x00000001
     /// 共享访问：读 + 写。
     static let shareReadWrite: UInt32 = 0x00000003
     /// 创建选项。
     static let createOptions: UInt32 = 0x00000040
     /// 文件属性：覆盖已存在的文件。
     static let fileAttributesOverwrite: UInt32 = 0x00000002
+
+    /// CreateDisposition：只打开已存在的文件，不存在则失败。
+    static let createOpen: UInt32 = 0x01
+    /// CreateDisposition：存在则创建，不存在则失败。
+    static let createCreate: UInt32 = 0x02
+    /// CreateDisposition：不存在则创建。
+    static let createOpenIf: UInt32 = 0x03
+    /// CreateDisposition：存在则截断重写，不存在则失败。
+    static let createOverwrite: UInt32 = 0x04
+    /// CreateDisposition：存在则截断重写，不存在则创建。
+    static let createOverwriteIf: UInt32 = 0x05
 }
 
 // MARK: - SMB2 头部
@@ -69,7 +82,7 @@ enum SMB2 {
 /// 字段偏移严格按 MS-SMB2 2.2.1.2：
 /// 0 ProtocolId · 4 StructureSize · 6 CreditCharge · 8 Status ·
 /// 12 Command · 14 Credits · 16 Flags · 20 NextCommand · 24 MessageId ·
-/// 32 Reserved · 36 TreeId · 40 SessionId · 48 Signature
+/// 32 Reserved · 36 TreeId · 40 SessionId · 48 Signature(16)
 struct SMB2Header {
     var command: UInt16
     var messageId: UInt64
@@ -77,8 +90,6 @@ struct SMB2Header {
     var flags: UInt32 = 0
     var treeId: UInt32 = 0
     var sessionId: UInt64 = 0
-    /// 各命令结构体的长度（偏移 60-63）。
-    var bodyLength: UInt32 = 0
 
     /// 构造请求头。
     init(command: UInt16, messageId: UInt64, credits: UInt16, flags: UInt32) {
@@ -110,13 +121,15 @@ struct SMB2Header {
             session |= UInt64(bytes[40 + index]) << UInt64(8 * index)
         }
         sessionId = session == 0xffffffffffffffff ? 0 : session
-        bodyLength = UInt32(bytes[60]) | (UInt32(bytes[61]) << 8) | (UInt32(bytes[62]) << 16) | (UInt32(bytes[63]) << 24)
     }
 
     /// 序列化成字节。
     ///
-    /// 用 append 而不是下标赋值：下标写错会直接 crash，且不好定位。
-    func encoded(bodyLength: UInt32) -> [UInt8] {
+    /// ⚠️ 头是固定 64 字节，偏移 48-63 是 **Signature（16 字节）**，
+    /// **没有 BodyLength 字段** —— impacket 的 SMB2Packet 结构体也证实这一点。
+    /// 之前误以为「各命令结构体的长度」放在偏移 60-63，实际那是签名区。
+    /// 请求的签名区本来就全 0，所以写 0 无害，但字段归属要改对。
+    func encoded() -> [UInt8] {
         var bytes = [UInt8]()
         bytes.reserveCapacity(SMB2.headerSize)
         bytes.append(contentsOf: SMB2.protocolIdentifier)
@@ -131,10 +144,8 @@ struct SMB2Header {
         bytes.appendLE(UInt32(0))           // Reserved
         bytes.appendLE(treeId)              // TreeId
         bytes.appendLE(sessionId)           // SessionId（8 字节）
-        // Signature 等字段补到偏移 60
-        bytes.append(contentsOf: [UInt8](repeating: 0, count: max(0, 60 - bytes.count)))
-        // 各命令结构体的长度在头内偏移 60-63
-        bytes.appendLE(bodyLength)
+        // 偏移 48-63：Signature（16 字节），请求时全 0
+        bytes.append(contentsOf: [UInt8](repeating: 0, count: 16))
         return bytes
     }
 }
