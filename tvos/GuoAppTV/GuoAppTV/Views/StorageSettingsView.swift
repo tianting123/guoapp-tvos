@@ -17,6 +17,29 @@ struct StorageSettingsView: View {
     @State private var status = ""
     @State private var busy = false
 
+    /// WebDAV 地址拆成四段单独输入。
+    ///
+    /// tvOS 的系统键盘要切符号面板才能打「:」「/」「https://」，在电视上
+    /// 几乎没法用。这里只让用户填 IP 或域名，其余由程序拼好。
+    @State private var webdavScheme = "https"
+    @State private var webdavHost = ""
+    @State private var webdavPortText = "6690"
+    @State private var webdavPath = ""
+    /// 协议选择弹窗。
+    @State private var activeWebdavScheme = false
+    /// 同步频率选择弹窗。
+    @State private var activeSyncInterval = false
+
+    /// 同步间隔选项（秒）。0 表示不自动同步。
+    private static let syncIntervals: [Double] = [0, 3, 10, 30, 60, 300]
+    private static func syncIntervalLabel(_ value: Double) -> String {
+        if value == 0 { return "不自动同步" }
+        if value < 60 { return "每 \(Int(value)) 秒" }
+        return "每 \(Int(value / 60)) 分钟"
+    }
+
+    @AppStorage("remoteSyncInterval") private var syncInterval: Double = 3
+
     private let settingsStore = StorageSettingsStore()
 
     var body: some View {
@@ -29,6 +52,7 @@ struct StorageSettingsView: View {
                 if settings.kind == .webdav {
                     webdavGroup
                 }
+                syncGroup
                 actionGroup
                 if !status.isEmpty {
                     statusNote
@@ -39,6 +63,25 @@ struct StorageSettingsView: View {
             .padding(.bottom, 56)
         }
         .onAppear(perform: load)
+        .sheet(isPresented: $activeSyncInterval) {
+            TVOptionSheet(
+                title: "自动同步",
+                options: Self.syncIntervals.map {
+                    TVOption(value: $0, label: Self.syncIntervalLabel($0))
+                },
+                selection: $syncInterval
+            )
+        }
+        .sheet(isPresented: $activeWebdavScheme) {
+            TVOptionSheet(
+                title: "协议",
+                options: [
+                    TVOption(value: "https", label: "HTTPS"),
+                    TVOption(value: "http", label: "HTTP"),
+                ],
+                selection: $webdavScheme
+            )
+        }
     }
 
     // MARK: - 存储方式
@@ -97,14 +140,90 @@ struct StorageSettingsView: View {
 
     private var webdavGroup: some View {
         TVSettingGroup(title: "WebDAV") {
-            TVTextFieldRow(title: "地址", placeholder: "https://192.168.2.99:6690/backup", text: $settings.webdavURL)
+            TVValueRow(title: "协议", value: webdavScheme == "http" ? "HTTP" : "HTTPS") {
+                activeWebdavScheme = true
+            }
+            TVSettingDivider()
+            TVTextFieldRow(title: "服务器", placeholder: "192.168.2.99", text: $webdavHost)
+            TVSettingDivider()
+            TVTextFieldRow(title: "端口", placeholder: "6690", text: $webdavPortText)
+            TVSettingDivider()
+            TVTextFieldRow(title: "路径", placeholder: "留空表示根目录", text: $webdavPath)
             TVSettingDivider()
             TVTextFieldRow(title: "用户名", placeholder: "填写 NAS 账号", text: $settings.webdavUsername)
             TVSettingDivider()
             TVTextFieldRow(title: "密码", placeholder: "留空表示不修改", text: $webdavPassword, isSecure: true)
             TVSettingDivider()
             TVTextFieldRow(title: "文件名", placeholder: "tv-state.json", text: $settings.webdavFileName)
+            TVSettingDivider()
+            Text("完整地址：\(webdavURLPreview)")
+                .font(.system(size: 18))
+                .foregroundColor(TVTheme.textTertiary)
+                .padding(.horizontal, 28)
+                .padding(.vertical, 14)
         }
+    }
+
+    /// 拼出来的完整 WebDAV 地址（给用户确认）。
+    private var webdavURLPreview: String {
+        let host = webdavHost.isEmpty ? "服务器" : webdavHost
+        let port = webdavPortText.isEmpty ? "" : ":\(webdavPortText)"
+        var path = webdavPath
+        if path.isEmpty { path = "" } else if !path.hasPrefix("/") { path = "/" + path }
+        return "\(webdavScheme)://\(host)\(port)\(path)"
+    }
+
+    /// 由各分段拼出完整地址，写进设置。
+    private func composeWebDAVURL() -> String {
+        let host = webdavHost.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !host.isEmpty else { return "" }
+        var path = webdavPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        if path.isEmpty { path = "" } else if !path.hasPrefix("/") { path = "/" + path }
+        let port = webdavPortText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let portPart = port.isEmpty ? "" : ":\(port)"
+        return "\(webdavScheme)://\(host)\(portPart)\(path)"
+    }
+
+    /// 把完整地址拆回各分段（进入页面时用）。
+    private func decomposeWebDAVURL(_ url: String) {
+        guard let parsed = URL(string: url), let scheme = parsed.scheme else {
+            // 拆不动就整段塞进主机栏，用户自己改。
+            webdavScheme = "https"
+            webdavHost = url
+            webdavPortText = "6690"
+            webdavPath = ""
+            return
+        }
+        webdavScheme = scheme == "http" ? "http" : "https"
+        webdavHost = parsed.host ?? ""
+        webdavPortText = parsed.port.map(String.init) ?? (scheme == "http" ? "80" : "6690")
+        var path = parsed.path
+        if path == "/" { path = "" }
+        webdavPath = path
+    }
+
+    // MARK: - 同步频率
+
+    private var syncGroup: some View {
+        TVSettingGroup(title: "同步频率") {
+            TVValueRow(title: "自动同步", value: Self.syncIntervalLabel(syncInterval)) {
+                activeSyncInterval = true
+            }
+            TVSettingDivider()
+            Text(syncExplanation)
+                .font(.system(size: 18))
+                .foregroundColor(TVTheme.textTertiary)
+                .padding(.horizontal, 28)
+                .padding(.vertical, 14)
+        }
+    }
+
+    /// 说明当前的实际同步节奏。
+    private var syncExplanation: String {
+        if syncInterval == 0 {
+            return "不自动同步：只在「立即备份到远端」时写入。进度仍会存在本机缓存。"
+        }
+        return "观看时进度每 5 秒记一次，连续记录后会合并成一次远端写入，实际间隔约 \(Int(syncInterval)) 秒。退出应用时会再补写一次。"
     }
 
     // MARK: - 操作
@@ -178,11 +297,14 @@ struct StorageSettingsView: View {
         smbPortText = String(settings.smbPort)
         smbPassword = ""
         webdavPassword = ""
+        decomposeWebDAVURL(settings.webdavURL)
     }
 
     private func save() {
         var updated = settings
         updated.smbPort = Int(smbPortText) ?? 445
+        // 分段拼出的地址才是准的（settings.webdavURL 可能还是老的整段值）。
+        updated.webdavURL = composeWebDAVURL()
         if !smbPassword.isEmpty {
             settingsStore.setSMBPassword(smbPassword)
             smbPassword = ""
@@ -192,6 +314,8 @@ struct StorageSettingsView: View {
             webdavPassword = ""
         }
         settingsStore.settings = updated
+        // 配置变了就换掉 Store 手里的远端后端，否则它还在连旧地址。
+        store.reloadRemoteBackend()
     }
 
     private func testConnection() async {

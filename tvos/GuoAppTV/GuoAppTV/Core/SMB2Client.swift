@@ -333,26 +333,29 @@ final class SMB2Client {
     // MARK: - 文件读写
 
     /// 打开（若不存在则创建）一个文件，返回文件句柄。
-    func openFile(_ path: String, forWriting: Bool) async throws -> UInt64 {
-        // MS-SMB2 2.2.13.1 CREATE Request：
-        // 0 StructureSize(57) · 2 SecurityFlags · 4 DesiredAccess
-        // 8 FileAttributes · 12 ShareAccess · 16 CreateOptions
-        // 20 CreateDisposition · 24 Reserved · 28 CreateDuration
-        // 32 Reserved2 · 48 CreateContextsOffset/Length · 56 BufferOffset
-        // 58 BufferLength，缓冲区从 60（=64 头 + 56 结构体）开始。
-        var body = [UInt8](repeating: 0, count: 56)
-        body[0] = 0x39  // StructureSize = 57
-        body.appendLE(SMB2.accessReadWrite)      // DesiredAccess
-        body.appendLE(SMB2.fileAttributesNormal) // FileAttributes
-        body.appendLE(SMB2.shareReadWrite)       // ShareAccess
-        body.appendLE(SMB2.createOptions)        // CreateOptions
-        body.appendLE(UInt32(0x03))               // CreateDisposition = 不存在则创建
-        // BufferOffset = 120（相对报文头起点）
-        body.appendLE(UInt16(120))
+    func openFile(_ path: String, forWriting: Bool) async throws -> SMB2FileId {
+        // MS-SMB2 2.2.13.1 CREATE Request（结构体 56 字节 + 文件名）：
+        // 0  StructureSize(57) · 2 SecurityFlags(1) · 3 RequestedOplockLevel(1)
+        // 4  ImpersonationLevel(4) · 8 SmbCreateFlags(8) · 16 Reserved(8)
+        // 24 DesiredAccess(4) · 28 FileAttributes(4) · 32 ShareAccess(4)
+        // 36 CreateDisposition(4) · 40 CreateOptions(4)
+        // 44 NameOffset(2) · 46 NameLength(2)
+        // 48 CreateContextsOffset(4) · 52 CreateContextsLength(4)
+        // 文件名从 56 开始（NameOffset = 64 + 56 = 120）。
+        //
+        // 字段必须按下标填：先预分配再 append 会把字段整体推到后面去。
         let nameBytes = Array(path.utf16).flatMap { unit -> [UInt8] in
             [UInt8(unit & 0xff), UInt8((unit >> 8) & 0xff)]
         }
-        body.appendLE(UInt16(nameBytes.count))    // BufferLength
+        var body = [UInt8](repeating: 0, count: 56)
+        body[0] = 0x39  // StructureSize = 57
+        putLE(&body, 24, SMB2.accessReadWrite)       // DesiredAccess
+        putLE(&body, 28, SMB2.fileAttributesNormal)  // FileAttributes
+        putLE(&body, 32, SMB2.shareReadWrite)        // ShareAccess
+        putLE(&body, 36, UInt32(0x03))               // CreateDisposition = 不存在则创建
+        putLE(&body, 40, SMB2.createOptions)         // CreateOptions
+        putLE(&body, 44, UInt16(120))                // NameOffset
+        putLE(&body, 46, UInt16(nameBytes.count))    // NameLength
         body.append(contentsOf: nameBytes)
 
         let response = try await send(
@@ -367,44 +370,39 @@ final class SMB2Client {
         guard response.status == 0 else {
             throw SMBError.status(response.status)
         }
-        // FileId 在响应结构偏移 64+8 = 72（8 字节 Persistent + 8 字节 Volatile）
-        // CREATE 响应：FileId 在响应结构偏移 8（Persistent 8 字节 + Volatile 8 字节），
-        // 相对报文头起点是 64 + 8 = 72。
+        // CREATE 响应：FileId 在响应结构偏移 8（Persistent 8 + Volatile 8），
+        // 相对报文头起点是 64 + 8 = 72，共 16 字节。
         let bytes = [UInt8](response.data)
         guard bytes.count >= 88 else { throw SMBError.unexpectedResponse }
-        var fileId: UInt64 = 0
-        for index in 0..<8 {
-            fileId |= UInt64(bytes[72 + index]) << UInt64(8 * index)
-        }
-        return fileId
+        return Array(bytes[72..<88])
     }
 
     /// 关闭文件句柄。
-    func closeFile(_ fileId: UInt64) async throws {
-        // MS-SMB2 2.2.15.1 CLOSE Request：
-        // 0 StructureSize(25) · 2 Flags · 4 Reserved · 8 FileId(16)
+    func closeFile(_ fileId: SMB2FileId) async throws {
+        // MS-SMB2 2.2.15.1 CLOSE Request（结构体 24 字节）：
+        // 0 StructureSize(25) · 2 Flags(2) · 4 Reserved(4) · 8 FileId(16)
         var body = [UInt8](repeating: 0, count: 24)
         body[0] = 0x19  // StructureSize = 25
-        body.appendLE(fileId)
+        putBytes(&body, 8, fileId)
         _ = try await send(command: SMB2.commandCLOSE, body: body, treeId: treeId, sessionId: sessionId)
     }
 
     /// 读文件内容。
-    func readFile(_ fileId: UInt64, length: Int) async throws -> Data {
-        // MS-SMB2 2.2.19.1 READ Request：
-        // 0 StructureSize(49) · 2 Padding · 4 Flags · 8 FileId(16)
-        // 24 MinimumCount · 28 Channel · 32 RemainingBytes · 36 Offset
-        // 44 Length · 48 BufferOffset/Length
+    func readFile(_ fileId: SMB2FileId, length: Int) async throws -> Data {
+        // MS-SMB2 2.2.19.1 READ Request（结构体 48 字节）：
+        // 0  StructureSize(49) · 2 Padding(1) · 3 Reserved(1) · 4 Length(4)
+        // 8  Offset(8) · 16 FileId(16) · 32 MinimumCount(4) · 36 Channel(4)
+        // 40 RemainingBytes(4) · 44 ReadChannelInfoOffset(2) · 46 ReadChannelInfoLength(2)
         var body = [UInt8](repeating: 0, count: 48)
         body[0] = 0x31  // StructureSize = 49
-        body.appendLE(fileId)                     // FileId（16 字节）
-        body.appendLE(UInt32(0))                  // MinimumCount
-        body.appendLE(UInt32(0))                  // Channel
-        body.appendLE(UInt32(0))                  // RemainingBytes
-        body.appendLE(UInt64(0))                  // Offset
-        body.appendLE(UInt32(length))             // Length
-        body.appendLE(UInt16(0))                  // BufferOffset（未用缓冲）
-        body.appendLE(UInt16(0))                  // BufferLength
+        putLE(&body, 4, UInt32(length))  // Length
+        putLE(&body, 8, UInt64(0))       // Offset
+        putBytes(&body, 16, fileId)       // FileId（16 字节）
+        putLE(&body, 32, UInt32(0))       // MinimumCount
+        putLE(&body, 36, UInt32(0))       // Channel
+        putLE(&body, 40, UInt32(0))       // RemainingBytes
+        putLE(&body, 44, UInt16(0))       // ReadChannelInfoOffset
+        putLE(&body, 46, UInt16(0))       // ReadChannelInfoLength
 
         let response = try await send(
             command: SMB2.commandREAD,
@@ -430,19 +428,60 @@ final class SMB2Client {
     }
 
     /// 写文件内容（从偏移 0 开始，覆盖写）。
-    func writeFile(_ fileId: UInt64, data: Data) async throws {
-        // MS-SMB2 2.2.23.1 WRITE Request：
-        // 0 StructureSize(49) · 2 DataOffset(2) · 4 Length(4) · 8 Offset(8)
-        // 16 FileId(16) · 32 Channel(4) · 36 RemainingBytes(4) · 40 WriteChannelInfo
-        // 44 Flags(4)，数据从 112（=64 头 + 48 结构体）开始。
+    /// 把文件长度设为指定值（截断或补零）。
+    ///
+    /// 用 SET_INFO 命令 + FileEndOfFileInformation（信息级别 6）。
+    /// 覆盖写时若新内容比旧的短，不截断的话尾部会残留旧字节，
+    /// 下次读回来就不是合法 JSON 了。
+    func setEndOfFile(_ fileId: SMB2FileId, length: UInt64) async throws {
+        // MS-SMB2 2.2.37.5 SET_INFO Request：
+        // 0  StructureSize(33) · 2 InfoType(1) · 3 FileInfoClass(1)
+        // 4  BufferLength(4) · 8 BufferOffset(2) · 10 Reserved(2)
+        // 12 AdditionalInformation(4) · 16 FileId(16)
+        // 32 缓冲区（FileEndOfFileInformation：EndOfFile 8 字节）
+        //
+        // 注意 FileInfoClass 只占 1 字节、InfoType 另占 1 字节：
+        //   InfoType = 1 (SMB2_0_INFO_FILE)
+        //   FileInfoClass = 6 (FileEndOfFileInformation)
+        // 缓冲区偏移 = 64 字节头 + 32 字节结构体 = 96。
+        // 布局对照 impacket 的 SMB2SetInfo（smb3structs.py）。
+        // 结构体 32 字节 + 8 字节缓冲区 = 40 字节，字段按下标填（不能追加，
+        // 追加会整体错位）。
+        var body = [UInt8](repeating: 0, count: 40)
+        body[0] = 0x21  // StructureSize = 33
+        body[2] = 0x01  // InfoType = FILE
+        body[3] = 0x06  // FileInfoClass = FileEndOfFileInformation
+        putLE(&body, 4, UInt32(8))    // BufferLength
+        putLE(&body, 8, UInt16(96))   // BufferOffset = 64 头 + 32 结构体
+        // Reserved（10-11）与 AdditionalInformation（12-15）保持 0
+        putBytes(&body, 16, fileId)   // FileId（16 字节）
+        putLE(&body, 32, length)      // EndOfFile
+
+        let response = try await send(
+            command: SMB2.commandSET_INFO,
+            body: body,
+            treeId: treeId,
+            sessionId: sessionId
+        )
+        guard response.status == 0 else {
+            throw SMBError.status(response.status)
+        }
+    }
+
+    func writeFile(_ fileId: SMB2FileId, data: Data) async throws {
+        // MS-SMB2 2.2.23.1 WRITE Request（结构体 48 字节 + 数据）：
+        // 0  StructureSize(49) · 2 DataOffset(2) · 4 Length(4) · 8 Offset(8)
+        // 16 FileId(16) · 32 Channel(4) · 36 RemainingBytes(4)
+        // 40 WriteChannelInfoOffset(2) · 42 WriteChannelInfoLength(2)
+        // 44 Flags(4)，数据从 112（=64+48）开始。
         var body = [UInt8](repeating: 0, count: 48)
         body[0] = 0x31  // StructureSize = 49
-        body.appendLE(UInt16(112))               // DataOffset
-        body.appendLE(UInt32(data.count))         // Length
-        body.appendLE(UInt64(0))                  // Offset
-        body.appendLE(fileId)                     // FileId（16 字节）
-        body.appendLE(UInt32(0))                  // Channel
-        body.appendLE(UInt32(0))                  // RemainingBytes
+        putLE(&body, 2, UInt16(112))        // DataOffset
+        putLE(&body, 4, UInt32(data.count)) // Length
+        putLE(&body, 8, UInt64(0))          // Offset
+        putBytes(&body, 16, fileId)         // FileId（16 字节）
+        putLE(&body, 32, UInt32(0))         // Channel
+        putLE(&body, 36, UInt32(0))         // RemainingBytes
         body.append(contentsOf: data)
 
         let response = try await send(

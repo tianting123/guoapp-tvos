@@ -77,8 +77,18 @@ final class Store: ObservableObject {
     private var remote: StorageBackend?
     /// 远端同步的防抖任务：进度每 5 秒落一次盘，不必每次都同步远端。
     private var syncTask: Task<Void, Never>?
-    /// 远端同步的最小间隔。
-    private static let syncDelay: Duration = .seconds(3)
+    /// 远端同步的最小间隔（可在设置里调整）。
+    ///
+    /// 进度每 5 秒落一次盘，每次落盘都会把同步任务重新计时（防抖），
+    /// 所以实际同步间隔约等于「落盘间隔 + 同步延迟」。
+    /// 默认 3 秒：SMB 每次同步都要重写整个状态文件，间隔太短会频繁写盘；
+    /// 太长则退出应用时可能来不及把最后一点进度传上去。
+    private var syncDelay: Duration? {
+        let seconds = UserDefaults.standard.double(forKey: "remoteSyncInterval")
+        // 0 表示不自动同步（只在点「立即备份」时写）。
+        guard seconds > 0 else { return nil }
+        return .seconds(seconds)
+    }
 
     init(
         local: LocalStorageBackend = LocalStorageBackend(),
@@ -162,8 +172,10 @@ final class Store: ObservableObject {
         try? local.saveSync(state)
         guard remote != nil else { return }
         syncTask?.cancel()
+        // 间隔设为 0 表示不自动同步，只在点「立即备份」时写远端。
+        guard let delay = syncDelay else { return }
         syncTask = Task { [weak self] in
-            try? await Task.sleep(for: Self.syncDelay)
+            try? await Task.sleep(for: delay)
             guard !Task.isCancelled, let self, let backend = self.remote else { return }
             await self.syncToRemote(backend, state: state)
         }
@@ -200,8 +212,23 @@ final class Store: ObservableObject {
         }
     }
 
+    /// 按当前配置重建远端后端。
+    ///
+    /// 设置页改了存储配置后必须调这个：Store 持有的 remote 还是旧配置的
+    /// 实例，不换掉的话「测试连接」和后台同步都还在连旧地址。
+    ///
+    /// 同时会把旧的 SMB 连接断开，避免白白占着一条 TCP 连接。
+    func reloadRemoteBackend() {
+        if let smb = remote as? SMBStore {
+            smb.disconnect()
+        }
+        remote = makeRemoteBackend()
+        remoteStatus = remote == nil ? "未配置远端存储" : remoteStatus
+    }
+
     /// 立刻把当前状态推到远端（设置页的「立即备份」）。
     func backupNow() async {
+        reloadRemoteBackend()
         guard let backend = remote ?? makeRemoteBackend() else {
             remoteStatus = "未配置远端存储"
             remoteIsHealthy = false
@@ -213,6 +240,7 @@ final class Store: ObservableObject {
 
     /// 从远端拉回并覆盖本地（设置页的「从远端恢复」）。
     func restoreNow() async {
+        reloadRemoteBackend()
         guard let backend = remote ?? makeRemoteBackend() else {
             remoteStatus = "未配置远端存储"
             remoteIsHealthy = false
@@ -237,6 +265,8 @@ final class Store: ObservableObject {
 
     /// 测试远端连接。
     func testConnection() async -> String {
+        // 先按当前配置重建后端，避免测的是旧配置。
+        reloadRemoteBackend()
         guard let backend = makeRemoteBackend() else {
             remoteStatus = "未配置远端存储"
             remoteIsHealthy = false
@@ -270,6 +300,9 @@ final class Store: ObservableObject {
     }
 
     /// 按当前配置构造远端后端。
+    ///
+    /// 配置没变时复用已有实例 —— SMBStore 内部持有一条复用的 TCP 连接，
+    /// 每次重建就等于每次重新握手认证。
     func makeRemoteBackend() -> StorageBackend? {
         let settings = settingsStore.settings
         switch settings.kind {
@@ -277,6 +310,9 @@ final class Store: ObservableObject {
             return nil
         case .smb:
             guard !settings.smbHost.isEmpty, !settings.smbShare.isEmpty else { return nil }
+            if let existing = remote as? SMBStore, existing.matches(settings) {
+                return existing
+            }
             return SMBStore(
                 host: settings.smbHost,
                 port: settings.smbPort,

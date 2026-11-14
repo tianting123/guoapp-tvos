@@ -38,6 +38,16 @@ final class SMBStore: StorageBackend {
         self.fileName = fileName
     }
 
+    /// 当前配置是否与给定配置一致（用于判断能否复用已有连接）。
+    func matches(_ settings: StorageSettings) -> Bool {
+        host == settings.smbHost
+            && port == settings.smbPort
+            && share == settings.smbShare
+            && directory == settings.smbDirectory
+            && username == settings.smbUsername
+            && domain == settings.smbDomain
+    }
+
     /// 共享内的文件路径。
     private var remotePath: String {
         var path = "\\" + fileName
@@ -52,7 +62,7 @@ final class SMBStore: StorageBackend {
 
     func load() async throws -> PersistedState? {
         let client = try await connectedClient()
-        let fileId: UInt64
+        let fileId: SMB2FileId
         do {
             fileId = try await client.openFile(remotePath, forWriting: false)
         } catch SMBError.fileNotFound {
@@ -71,6 +81,9 @@ final class SMBStore: StorageBackend {
         defer { Task { try? await client.closeFile(fileId) } }
         let data = try JSONEncoder().encode(state)
         try await client.writeFile(fileId, data: data)
+        // 截断到新长度：覆盖写不会自动截短，不截的话尾部残留旧字节，
+        // 下次读回来就不是合法 JSON（删过追剧记录后最容易踩到）。
+        try await client.setEndOfFile(fileId, length: UInt64(data.count))
     }
 
     /// 测试连接：连上服务器、认证、连共享，并试写一个临时文件确认可写。

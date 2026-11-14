@@ -18,6 +18,7 @@ enum SMB2 {
     static let commandIOCTL: UInt16 = 0x000B
     static let commandQUERY_DIRECTORY: UInt16 = 0x000E
     static let commandQUERY_INFO: UInt16 = 0x0010
+    static let commandSET_INFO: UInt16 = 0x0011
 
     /// SMB2 header 长度。
     static let headerSize = 64
@@ -139,6 +140,42 @@ struct SMB2Header {
 }
 
 // MARK: - 字节工具
+
+/// 按下标把小端整数写进字节数组。
+///
+/// SMB2 的各命令结构体字段位置固定，**必须按下标填**：先预分配一段零再
+/// `append` 字段会把字段整体推到后面去（曾导致 WRITE 的 DataOffset 落到
+/// 结构体外面，服务端直接报错）。
+func putLE(_ bytes: inout [UInt8], _ offset: Int, _ value: UInt16) {
+    bytes[offset] = UInt8(value & 0xff)
+    bytes[offset + 1] = UInt8((value >> 8) & 0xff)
+}
+
+func putLE(_ bytes: inout [UInt8], _ offset: Int, _ value: UInt32) {
+    bytes[offset] = UInt8(value & 0xff)
+    bytes[offset + 1] = UInt8((value >> 8) & 0xff)
+    bytes[offset + 2] = UInt8((value >> 16) & 0xff)
+    bytes[offset + 3] = UInt8((value >> 24) & 0xff)
+}
+
+func putLE(_ bytes: inout [UInt8], _ offset: Int, _ value: UInt64) {
+    for index in 0..<8 {
+        bytes[offset + index] = UInt8((value >> UInt64(8 * index)) & 0xff)
+    }
+}
+
+/// 按下标写入一段字节。
+func putBytes(_ bytes: inout [UInt8], _ offset: Int, _ value: [UInt8]) {
+    for (index, byte) in value.enumerated() where offset + index < bytes.count {
+        bytes[offset + index] = byte
+    }
+}
+
+/// SMB2 文件句柄：16 字节（Persistent 8 + Volatile 8）。
+///
+/// 之前用 UInt64 只带低 8 字节，服务端会认成无效句柄。
+typealias SMB2FileId = [UInt8]
+
 
 extension Data {
     /// 按小端读 UInt16。
