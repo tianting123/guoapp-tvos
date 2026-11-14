@@ -287,6 +287,12 @@ struct SourceSite: Identifiable, Hashable {
     let requiresAccount: Bool
     /// 该站源有 VIP 提示（上游 core 标记 SkipVIPPrompt 的反面）。
     let hasVIPPrompt: Bool
+    /// 默认关闭的站源：上游把一部分源标成「默认不启用」，
+    /// 用户需要在「站源开关」里手动打开才能用（与上游 Dart 侧的
+    /// `SourceSite.defaultOff` / `sourceEnabled` 语义一致）。
+    let defaultOff: Bool
+    /// 核心报告该站源当前可用。
+    let available: Bool
 
     init(
         id: String,
@@ -294,7 +300,9 @@ struct SourceSite: Identifiable, Hashable {
         description: String,
         requiresDeviceRegistration: Bool = false,
         requiresAccount: Bool = false,
-        hasVIPPrompt: Bool = false
+        hasVIPPrompt: Bool = false,
+        defaultOff: Bool = false,
+        available: Bool = true
     ) {
         self.id = id
         self.name = name
@@ -302,14 +310,17 @@ struct SourceSite: Identifiable, Hashable {
         self.requiresDeviceRegistration = requiresDeviceRegistration
         self.requiresAccount = requiresAccount
         self.hasVIPPrompt = hasVIPPrompt
+        self.defaultOff = defaultOff
+        self.available = available
     }
 
     /// 核心 `initialize` 返回的站源条目（Go 侧 nativeSourceInfo）。
     ///
     /// 核心除了 id / name / description，还会给出该站源支持哪些能力：
-    /// devices（需设备注册）、account（需账号登录）、vipPrompt。
-    /// 这三个字段之前没接，界面因此不知道哪个源要登录或注册，
-    /// 用户只会看到「播放失败」而不知道该做什么。
+    /// devices（需设备注册）、account（需账号登录）、vipPrompt，
+    /// 以及 defaultOff（默认关闭）/ available（当前可用）。
+    /// 这几个字段之前没接，界面因此不知道哪个源要登录或注册、
+    /// 哪些源默认是关的，用户只会看到「播放失败」而不知道该做什么。
     init?(dict: [String: Any]) {
         let identifier = stringValue(dict, "id")
         guard !identifier.isEmpty else { return nil }
@@ -319,6 +330,9 @@ struct SourceSite: Identifiable, Hashable {
         requiresDeviceRegistration = boolValue(dict, "devices")
         requiresAccount = boolValue(dict, "account")
         hasVIPPrompt = boolValue(dict, "vipPrompt")
+        defaultOff = boolValue(dict, "defaultOff")
+        // 核心省略 available 时按可用处理（核心总是给这个字段）。
+        available = dict["available"] == nil ? true : boolValue(dict, "available")
     }
 
     /// 与 Dart 侧 SourceSite.knownValues 对齐。
@@ -326,9 +340,13 @@ struct SourceSite: Identifiable, Hashable {
     /// 上游自 1.0.8 起由核心在初始化时告知站源清单（`initialize` 的 sources），
     /// 界面不再写死站源表。这里优先用核心给的清单；核心没给时（例如旧版核心）
     /// 再退回按 allSources 编译开关决定的写死列表。
+    ///
+    /// ⭐ `defaultOff` 的源**仍然要返回** —— 它们由「站源开关」控制是否启用，
+    /// 不能在这里直接丢掉，否则用户永远打不开（上游 Dart 也是分成
+    /// `values` 与 `restrictedValues` 两个列表）。
     static func available(allSources: Bool, coreSources: [SourceSite] = []) -> [SourceSite] {
         if !coreSources.isEmpty {
-            return coreSources
+            return coreSources.filter { $0.available }
         }
         let hongguo = SourceSite(id: "hongguo", name: "红果", description: "短剧 · 漫剧 · AI 剧")
         guard allSources else { return [hongguo] }

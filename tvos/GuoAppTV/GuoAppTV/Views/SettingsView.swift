@@ -56,7 +56,10 @@ struct SettingsView: View {
                         .frame(maxWidth: .infinity, alignment: .topLeading)
                         VStack(alignment: .leading, spacing: TVTheme.sectionSpacing) {
                             followGroup
-                            if appState.allSources { sourceGroup }
+                            if appState.allSources {
+                                sourceGroup
+                                sourceSwitchGroup
+                            }
                             storageAboutGroup
                         }
                         .frame(maxWidth: .infinity, alignment: .topLeading)
@@ -235,7 +238,7 @@ struct SettingsView: View {
 
     private var sourceGroup: some View {
         TVSettingGroup(title: "站源") {
-            let sites = SourceSite.available(allSources: appState.allSources)
+            let sites = appState.enabledSites
             ForEach(Array(sites.enumerated()), id: \.element.id) { index, site in
                 if index > 0 {
                     TVSettingDivider()
@@ -260,6 +263,32 @@ struct SettingsView: View {
                     }
                 }
             }
+            if sites.isEmpty {
+                note("没有已启用的站源，请在「站源开关」里打开。")
+            }
+        }
+    }
+
+    /// 站源开关：上游把一部分站源标成「默认关闭」（`defaultOff`），
+    /// 需要用户手动打开才能用。上游 Dart 侧有对应的 `sourceSwitches` 设置，
+    /// tvOS 版之前没做，导致这些源在界面上完全无法出现。
+    private var sourceSwitchGroup: some View {
+        TVSettingGroup(title: "站源开关") {
+            let sites = appState.availableSites
+            ForEach(Array(sites.enumerated()), id: \.element.id) { index, site in
+                if index > 0 {
+                    TVSettingDivider()
+                }
+                TVToggleRow(
+                    title: site.name,
+                    isOn: Binding(
+                        get: { appState.sourceEnabled(site.id) },
+                        set: { appState.setSourceEnabled(site.id, $0) }
+                    )
+                )
+            }
+            TVSettingDivider()
+            note("关闭的站源不出现在首页、搜索与追剧里；记录保留，重新打开后恢复。")
         }
     }
 
@@ -305,7 +334,7 @@ struct SettingsView: View {
             TVSettingDivider()
             infoRow("已用空间", storageBytes.map { StorageSize.label(bytes: $0) } ?? "正在计算…")
             TVSettingDivider()
-            infoRow("站源", SourceSite.available(allSources: appState.allSources)
+            infoRow("站源", appState.availableSites
                 .first { $0.id == appState.selectedSource }?.name ?? appState.selectedSource)
             TVSettingDivider()
             infoRow("版本", appVersion)

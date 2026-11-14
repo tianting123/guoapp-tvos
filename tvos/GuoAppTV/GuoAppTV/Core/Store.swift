@@ -12,15 +12,57 @@ final class AppState: ObservableObject {
     /// 核心告知的站源清单（上游自 1.0.8 起由核心在初始化时给出）。
     @Published var sources: [SourceSite] = []
 
+    /// 站源开关：键是站源 id，值是用户是否启用。
+    ///
+    /// 上游把一部分站源标成 `defaultOff`（默认关闭），需要在设置里手动打开。
+    /// 这里存用户显式改过的开关；没改过的按 `defaultOff` 取默认值
+    /// （与上游 Dart 的 `sourceEnabled` 语义一致）。
+    @Published var sourceSwitches: [String: Bool] = [:]
+
     /// 当前可用站源：优先用核心给的清单，缺失时退回写死列表。
     var availableSites: [SourceSite] {
         SourceSite.available(allSources: allSources, coreSources: sources)
+    }
+
+    /// 已启用的站源：界面上能选到的那些。
+    ///
+    /// 默认关闭的站源（`defaultOff`）除非用户手动打开，否则不出现在
+    /// 首页的站源条、搜索与设置里。
+    var enabledSites: [SourceSite] {
+        SourceSwitch.enabled(
+            availableSites,
+            switches: sourceSwitches,
+            id: { $0.id },
+            defaultOff: { $0.defaultOff }
+        )
+    }
+
+    /// 某个站源当前是否启用。
+    func sourceEnabled(_ id: String) -> Bool {
+        let site = availableSites.first { $0.id == id }
+        // 找不到时按启用处理，避免核心刚上报、清单还没同步时源凭空消失。
+        return SourceSwitch.isEnabled(
+            id: id,
+            switches: sourceSwitches,
+            defaultOff: site?.defaultOff ?? false
+        )
+    }
+
+    /// 设置某个站源是否启用。
+    func setSourceEnabled(_ id: String, _ enabled: Bool) {
+        sourceSwitches[id] = enabled
+        SourceSwitchStore.persist(sourceSwitches)
+        // 关掉了当前选中的站源 → 切回红果。
+        if !enabled, selectedSource == id {
+            selectedSource = availableSites.first?.id ?? "hongguo"
+        }
     }
 
     /// 启动本地核心；已初始化时直接返回。失败时保留错误文案供界面重试。
     func bootstrap() async {
         guard !initialized else { return }
         initializeError = nil
+        sourceSwitches = SourceSwitchStore.load()
         do {
             let result = try await CoreClient.shared.initialize()
             allSources = result.allSources
@@ -32,6 +74,29 @@ final class AppState: ObservableObject {
         } catch {
             initializeError = error.localizedDescription
         }
+    }
+}
+
+/// 站源开关的持久化（UserDefaults）。
+///
+/// 上游 Dart 侧存在 `sourceSwitches` 设置里，这里对应存一份。
+/// 全部是 static 方法、无实例状态 —— Swift 6 严格并发下不需要 Sendable 标注。
+enum SourceSwitchStore {
+    static let key = "sourceSwitches"
+
+    static func load() -> [String: Bool] {
+        guard let raw = UserDefaults.standard.dictionary(forKey: key) else { return [:] }
+        var result: [String: Bool] = [:]
+        for (id, value) in raw {
+            if let flag = value as? Bool { result[id] = flag }
+            // NSNumber 也能转成 Bool
+            if let number = value as? NSNumber { result[id] = number.boolValue }
+        }
+        return result
+    }
+
+    static func persist(_ switches: [String: Bool]) {
+        UserDefaults.standard.set(switches, forKey: key)
     }
 }
 

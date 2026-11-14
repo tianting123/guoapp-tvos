@@ -2,6 +2,40 @@
 
 每个版本一节，标题为 `VERSION` 中的完整版本号。发布工作流会把对应一节写入 GitHub Release 说明。
 
+## 2.54
+
+- **新增「站源开关」设置**：上游把一部分站源标成 `defaultOff`（默认关闭），
+  需要用户在设置里手动打开；上游 Dart 侧有对应的 `sourceSwitches` 设置与
+  `SourcesView` 页面，tvOS 版之前**完全没接** —— 核心上报的 15 个站源里，
+  那 11 个默认关闭的源既不出现在界面上、也无从打开。
+  现在设置页新增「站源开关」分组，每个源一个开关，关闭的源不出现在
+  首页站源条、搜索与追剧里，记录保留、重新打开后恢复。
+- **`SourceSite` 补齐 `defaultOff` / `available` 字段**：之前只解析了
+  `devices` / `account` / `vipPrompt`，核心给的这两个字段被丢掉了。
+- **站源清单改用核心上报的结果**：设置页原先直接调 `SourceSite.available(allSources:)`
+  走写死的 fallback 列表（只有 11 个，且缺禁果短剧 / 禁果 / 黑桃 / 笔盒 /
+  黄果视频 / 黄果 AI / 黄果旧版），现在统一用 `appState.availableSites`
+  （核心上报的 15 个）。
+- 新增 `Core/Logic/SourceSwitch.swift` 与对应单元测试（3 个），
+  站源开关的判定逻辑与上游 Dart 侧语义一致。
+
+## 2.54
+
+- **新增「站源开关」设置**：上游把一部分站源标成 `defaultOff`（默认关闭），
+  需要用户在设置里手动打开；上游 Dart 侧有对应的 `sourceSwitches` 设置与
+  `SourcesView` 页面，tvOS 版之前**完全没接** —— 核心上报的 15 个站源里，
+  那 11 个默认关闭的源既不出现在界面上、也无从打开。
+  现在设置页新增「站源开关」分组，每个源一个开关，关闭的源不出现在
+  首页站源条、搜索与追剧里，记录保留、重新打开后恢复。
+- **`SourceSite` 补齐 `defaultOff` / `available` 字段**：之前只解析了
+  `devices` / `account` / `vipPrompt`，核心给的这两个字段被丢掉了。
+- **站源清单改用核心上报的结果**：设置页原先直接调 `SourceSite.available(allSources:)`
+  走写死的 fallback 列表（只有 11 个，且缺禁果短剧 / 禁果 / 黑桃 / 笔盒 /
+  黄果视频 / 黄果 AI / 黄果旧版），现在统一用 `appState.availableSites`
+  （核心上报的 15 个）。
+- 新增 `Core/Logic/SourceSwitch.swift` 与对应单元测试（3 个），
+  站源开关的判定逻辑与上游 Dart 侧语义一致。
+
 ## 2.53
 
 - **修 SMB 连接报「SMB 错误状态 0xC000000D」**：TREE_CONNECT 的 `PathOffset`

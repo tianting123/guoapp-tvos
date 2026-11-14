@@ -90,7 +90,7 @@ struct SourceAccountView: View {
     /// 需要注册设备的站源（红果：注册设备号才能拿到播放签名）。
     @ViewBuilder
     private var deviceSection: some View {
-        let sources = appState.availableSites.filter { $0.requiresDeviceRegistration }
+        let sources = appState.enabledSites.filter { $0.requiresDeviceRegistration }
         if !sources.isEmpty {
             TVSettingGroup(title: "设备注册") {
                 ForEach(Array(sources.enumerated()), id: \.element.id) { index, site in
@@ -142,7 +142,7 @@ struct SourceAccountView: View {
     /// 需要账号登录的站源（青空次元）。
     @ViewBuilder
     private var accountSection: some View {
-        let sources = appState.availableSites.filter { $0.requiresAccount }
+        let sources = appState.enabledSites.filter { $0.requiresAccount }
         if !sources.isEmpty {
             TVSettingGroup(title: "站源账号") {
                 ForEach(Array(sources.enumerated()), id: \.element.id) { index, site in
@@ -296,7 +296,7 @@ struct SourceAccountView: View {
             proxyURL = settings.proxyURL
             systemProxyStatus = settings.systemProxyStatus
         }
-        for site in appState.availableSites {
+        for site in appState.enabledSites {
             if site.requiresDeviceRegistration {
                 let ready = (try? await CoreClient.shared.sourceDevicesReady(source: site.id)) ?? false
                 deviceStates[site.id] = ready
