@@ -51,6 +51,12 @@ struct WatchProgress: Codable, Equatable {
 struct FollowedDrama: Codable, Equatable {
     var drama: Drama
     var followedAt: Date
+    /// 追剧更新（FollowUpdate）：用户已知的集数；nil 表示还没有基准（第一次检查时设）。
+    /// 以下三个字段都是可选的：第四阶段之前存下的追剧照样能读出来。
+    var knownEpisodes: Int?
+    /// 最近一次检查（核心 followCheck）看到的集数。
+    var latestEpisodes: Int?
+    var checkedAt: Date?
 }
 
 // MARK: - 存储协调
@@ -105,15 +111,55 @@ final class Store: ObservableObject {
 
     // MARK: - 状态
 
+    // MARK: - 追剧更新
+
+    /// 记下一次检查的结果（基准规则见 FollowUpdate.afterCheck）。
+    /// releaseStatus：检查带回的完结状态（有就记下，已完结的剧以后不再自动检查）。
+    func recordCheck(dramaID: String, latestEpisodes: Int, releaseStatus: String = "", at date: Date) {
+        guard let index = follows.firstIndex(where: { $0.drama.id == dramaID }) else { return }
+        if !releaseStatus.isEmpty { follows[index].drama.releaseStatus = releaseStatus }
+        let counts = FollowUpdate.afterCheck(known: follows[index].knownEpisodes, latest: latestEpisodes)
+        follows[index].knownEpisodes = counts.known
+        follows[index].latestEpisodes = counts.latest
+        follows[index].checkedAt = date
+        persist()
+    }
+
+    /// 用户自己打开或播放了这部剧：已知集数追平，角标消失。
+    func acknowledgeUpdate(dramaID: String) {
+        guard let index = follows.firstIndex(where: { $0.drama.id == dramaID }),
+              let latest = follows[index].latestEpisodes,
+              FollowUpdate.hasUpdate(known: follows[index].knownEpisodes, latest: latest)
+        else { return }
+        follows[index].knownEpisodes = latest
+        persist()
+    }
+
+    /// 这部剧有更新时的角标（「更新至 N 集」），否则 nil。
+    func updateBadge(for dramaID: String) -> String? {
+        guard let follow = follows.first(where: { $0.drama.id == dramaID }),
+              FollowUpdate.hasUpdate(known: follow.knownEpisodes, latest: follow.latestEpisodes),
+              let latest = follow.latestEpisodes
+        else { return nil }
+        return FollowUpdate.badge(latest: latest)
+    }
+
+    var updatedFollowCount: Int {
+        follows.filter { FollowUpdate.hasUpdate(known: $0.knownEpisodes, latest: $0.latestEpisodes) }.count
+    }
+
     func isFollowing(_ drama: Drama) -> Bool {
         follows.contains { $0.drama.id == drama.id }
     }
 
-    func toggleFollow(_ drama: Drama) {
+    /// knownEpisodes：在详情页追剧时传详情里的分集数（与 followCheck 返回的是同一种计数），
+    /// 作为追剧更新的基准；其它地方追剧不传，由第一次检查设基准。
+    func toggleFollow(_ drama: Drama, knownEpisodes: Int? = nil) {
         if let index = follows.firstIndex(where: { $0.drama.id == drama.id }) {
             follows.remove(at: index)
         } else {
-            follows.insert(FollowedDrama(drama: drama, followedAt: Date()), at: 0)
+            let known = knownEpisodes.flatMap { $0 > 0 ? $0 : nil }
+            follows.insert(FollowedDrama(drama: drama, followedAt: Date(), knownEpisodes: known), at: 0)
         }
         persist()
     }
@@ -154,6 +200,12 @@ final class Store: ObservableObject {
         persist()
     }
 
+    /// 清除全部观看记录：「继续观看」清空，追剧列表不受影响。
+    func clearHistory() {
+        progress.removeAll()
+        persist()
+    }
+
     /// 删除某部剧的全部观看记录（最近观看里该剧的整条记录）。
     func deleteHistory(for drama: Drama) {
         progress.removeAll { $0.drama.id == drama.id }
@@ -183,7 +235,7 @@ final class Store: ObservableObject {
 
     /// 启动时拉远端状态：有就用远端覆盖本地（远端才是持久的那份）。
     func bootstrapRemote() async {
-        let backend = makeRemoteBackend()
+        let backend = await makeRemoteBackend()
         guard let backend else {
             remoteStatus = "未配置远端存储"
             remoteIsHealthy = true
@@ -218,18 +270,21 @@ final class Store: ObservableObject {
     /// 实例，不换掉的话「测试连接」和后台同步都还在连旧地址。
     ///
     /// 同时会把旧的 SMB 连接断开，避免白白占着一条 TCP 连接。
-    func reloadRemoteBackend() {
+    func reloadRemoteBackend() async {
         if let smb = remote as? SMBStore {
-            smb.disconnect()
+            await smb.disconnect()
         }
-        remote = makeRemoteBackend()
+        remote = await makeRemoteBackend()
         remoteStatus = remote == nil ? "未配置远端存储" : remoteStatus
     }
 
     /// 立刻把当前状态推到远端（设置页的「立即备份」）。
     func backupNow() async {
-        reloadRemoteBackend()
-        guard let backend = remote ?? makeRemoteBackend() else {
+        await reloadRemoteBackend()
+        // ?? 的右操作数是 autoclosure，不能在里面 await：分开求值。
+        var backend = remote
+        if backend == nil { backend = await makeRemoteBackend() }
+        guard let backend else {
             remoteStatus = "未配置远端存储"
             remoteIsHealthy = false
             return
@@ -240,8 +295,11 @@ final class Store: ObservableObject {
 
     /// 从远端拉回并覆盖本地（设置页的「从远端恢复」）。
     func restoreNow() async {
-        reloadRemoteBackend()
-        guard let backend = remote ?? makeRemoteBackend() else {
+        await reloadRemoteBackend()
+        // ?? 的右操作数是 autoclosure，不能在里面 await：分开求值。
+        var backend = remote
+        if backend == nil { backend = await makeRemoteBackend() }
+        guard let backend else {
             remoteStatus = "未配置远端存储"
             remoteIsHealthy = false
             return
@@ -266,8 +324,8 @@ final class Store: ObservableObject {
     /// 测试远端连接。
     func testConnection() async -> String {
         // 先按当前配置重建后端，避免测的是旧配置。
-        reloadRemoteBackend()
-        guard let backend = makeRemoteBackend() else {
+        await reloadRemoteBackend()
+        guard let backend = await makeRemoteBackend() else {
             remoteStatus = "未配置远端存储"
             remoteIsHealthy = false
             return remoteStatus
@@ -303,14 +361,14 @@ final class Store: ObservableObject {
     ///
     /// 配置没变时复用已有实例 —— SMBStore 内部持有一条复用的 TCP 连接，
     /// 每次重建就等于每次重新握手认证。
-    func makeRemoteBackend() -> StorageBackend? {
+    func makeRemoteBackend() async -> StorageBackend? {
         let settings = settingsStore.settings
         switch settings.kind {
         case .local:
             return nil
         case .smb:
             guard !settings.smbHost.isEmpty, !settings.smbShare.isEmpty else { return nil }
-            if let existing = remote as? SMBStore, existing.matches(settings) {
+            if let existing = remote as? SMBStore, await existing.matches(settings) {
                 return existing
             }
             return SMBStore(

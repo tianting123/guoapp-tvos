@@ -20,7 +20,10 @@ struct PersistedState: Codable, Equatable {
 /// tvOS 真机上只有 Caches 与 tmp 可写，系统在空间不足（以及应用不运行时）
 /// 会清理 Caches，所以本地副本并不可靠。远端后端把状态写到 NAS，
 /// 应用每次启动都能拉回来。
-protocol StorageBackend: AnyObject {
+///
+/// Swift 6 严格并发下，后端会被跨隔离域传递（后台同步任务、设置页测试连接），
+/// 因此协议要求 Sendable；实现类用 actor 隔离可变状态（连接句柄）。
+protocol StorageBackend: AnyObject, Sendable {
     /// 后端标识，用于界面显示。
     var displayName: String { get }
     /// 读取状态；没有数据时返回 nil（不当作错误）。
@@ -35,7 +38,7 @@ protocol StorageBackend: AnyObject {
 ///
 /// 这是 tvOS 上唯一能免 entitlement 的可用位置，代价是系统可能清理。
 /// 即使配了远端后端，也保留这份本地副本作为离线兜底。
-final class LocalStorageBackend: StorageBackend {
+final class LocalStorageBackend: StorageBackend, @unchecked Sendable {
     let displayName = "本地缓存"
 
     private let file: URL

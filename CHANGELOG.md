@@ -2,29 +2,26 @@
 
 每个版本一节，标题为 `VERSION` 中的完整版本号。发布工作流会把对应一节写入 GitHub Release 说明。
 
-## 未发布
+## 2.52
 
-- Go 核心改走 git submodule：删 vendored 快照 `native/`，上游仓库以 submodule
-  形式放在 `upstream/`，核心在 `upstream/native/`，指针指向 commit `283cd16`
-  （`feat: 红果分集带出横竖屏标记`，相对旧快照 `d7e69fb` 仅新增 `Chapter.vertical`
-  可选字段，向后兼容）；构建脚本、CI、`.gitignore` 的核心路径改为
-  `upstream/native`，CI 拉取时带 `submodules: recursive`；克隆须用
-  `git clone --recurse-submodules`（下载 ZIP 不含子模块内容）。
-  同步上游核心：见 README「与上游共享的部分」一节。
-
-- 从上游 [Xanerix/guoapp](https://github.com/Xanerix/guoapp) 拆为独立仓：本仓只含 tvOS
-  应用 + Go 核心快照（`native/`，固定 commit `d7e69fb`）+ 构建脚本与 CI；上游维护者
-  在 [Issue #13](https://github.com/Xanerix/guoapp/issues/13) 建议独立仓（两套 UI
-  同仓维护成本高，tvOS 构建进发布流程），本仓按该建议执行。
-- 文档同步：README / CHANGELOG / Info.plist 里「AVPlayer」改为 MPVKit（libmpv），
-  播放实际已用 MPVKit，不再是 AVPlayer。
-- MPVKit 锁定 1.1.0-n9.0.2（mpv v0.41.0 / FFmpeg n9.0.2），由提交进仓库的
-  `Package.resolved` 钉住，不再随上游自动升级；
-  MPVKit 本身为 LGPL-3.0，内置 libmpv 来自 mpv（GPL-2.0-or-later），分发前以
-  MPVKit 仓库 LICENSE 与 Release 说明为准。
-- 设置页「关于」区提示：追剧与观看进度存在 Caches，系统空间不足时可能被清理。
-- 修复播放一会后 tvOS 屏保自动弹出：mpv 不是 AVPlayer，系统不知道在播视频；
-  播放时禁止系统空闲计时器，暂停 / 停止 / 切后台时恢复。
+- **合并远端 redfruit 界面重构**：并入 2.47/2.48 那条线（推荐 hero 全屏流、
+  剧场精选横幅、追剧合并继续观看、详情页新头部、播放器换 Apple TV 风格控制层、
+  原生搜索页、我的个人中心），并保留本线的 NAS 存储、站源登录、焦点反馈。
+  播放器架构改为 `PlaybackSession`（分集逻辑）与 `PlayerController`（mpv）分离，
+  本线的「去登录」入口与诊断面板开关按新架构接回。
+- **新增远端存储**：追剧与观看进度不再只存在本机 Caches（tvOS 会在空间不足
+  或应用未运行时清理），可以存到 NAS。
+  - **SMB 共享**：自研 SMB2 客户端（tvOS 没有现成 SMB API），支持
+    NEGOTIATE / SESSION_SETUP（NTLMv2 认证）/ TREE_CONNECT / CREATE / READ /
+    WRITE / CLOSE，直连 NAS 的 445 端口读写共享目录里的状态文件。
+  - **WebDAV 备份**：用 URLSession 实现，支持 Basic 与 Digest 认证，可写到
+    群晖 Cloud Sync 的 WebDAV 端口。
+- **存储配置界面**：设置 → 追剧与进度 → 存储方式，可选本机缓存 / SMB 共享 /
+  WebDAV 备份，支持测试连接、立即备份、从远端恢复。密码存 Keychain，不落
+  UserDefaults。
+- 状态写入做了防抖（3 秒合并一次），远端不可用时静默降级到本机，不影响观看。
+- 上游同步到 `0b48331`（1.0.9+109），含 **#114 DNS 解析异常时改用 DoH
+  重连，修复部分电视盒和网络下红果设备注册失败**。
 
 ## 2.51
 
@@ -105,46 +102,14 @@
 
 ## 2.48
 
-- **新增远端存储**：追剧与观看进度不再只存在本机 Caches（tvOS 会在空间不足
-  或应用未运行时清理），可以存到 NAS。
-  - **SMB 共享**：自研 SMB2 客户端（tvOS 没有现成 SMB API），支持
-    NEGOTIATE / SESSION_SETUP（NTLMv2 认证）/ TREE_CONNECT / CREATE / READ /
-    WRITE / CLOSE，直连 NAS 的 445 端口读写共享目录里的状态文件。
-  - **WebDAV 备份**：用 URLSession 实现，支持 Basic 与 Digest 认证，可写到
-    群晖 Cloud Sync 的 WebDAV 端口。
-- **存储配置界面**：设置 → 追剧与进度 → 存储方式，可选本机缓存 / SMB 共享 /
-  WebDAV 备份，支持测试连接、立即备份、从远端恢复。密码存 Keychain，不落
-  UserDefaults。
-- 状态写入做了防抖（3 秒合并一次），远端不可用时静默降级到本机，不影响观看。
-- 上游同步到 `0b48331`（1.0.9+109），含 **#114 DNS 解析异常时改用 DoH
-  重连，修复部分电视盒和网络下红果设备注册失败**。
+- 诊断版（针对 2.47 点播即「播放失败」）：已确认解析成功、失败发生在播放器起播且无备用线路；本版让失败提示带上播放器原始错误原文，便于定位后正式修复。其他与 2.47 相同。
 
 ## 2.47
 
-- 同步上游核心到 Xanerix/guoapp `0b48331`（1.0.9+109），共 12 个提交。其中
-  **#114 系统 DNS 解析到 0.0.0.0 / 环回地址时报错时改用 DoH 重连，修复部分
-  电视盒和网络下红果设备注册失败**——这一条直接影响 tvOS 能否拿到播放地址。
-  另有红果系列剧、纯黑深色模式、定时停止、画面比例、红果听书站源、
-  榜单集数修复、Windows/macOS 窗口置顶等。
-- ⭐ **适配上游站源架构重构**（上游把 15 个官方站源搬进独立 Go 包
-  `native/sources` 并移入私有仓库，运行时不再持有具体站源代码）：
-  - 本仓改为自带 `fork/sources/` 站源包（取自上游 `62fb9d4` 公开可见的
-    `native/sources/`，共 53 个文件），构建时覆盖上游的 `native/sources/`，
-    保证站源可用且构建可复现，不再依赖上游的私有站源仓库。
-  - 红果出品方功能改为在站源包内实现（`fork/sources/provider_hongguo_producer.go`）：
-    解析搜索/列表载荷的 `copyright` 得到出品方名，按出品方精确过滤片单，
-    再用网页详情补上线日期，供按「最新 / 最热」排序。
-  - core 侧只保留协议与承载字段的最小改动：`Drama` / `LibraryDrama` 增加
-    `Producer` 字段、`nativeDispatch` 增加 `producerDramas` 与 `producerWorks`
-    两个动作、出品方能力通过可选接口 `ProducerProvider` 由站源实现，
-    core 不内置任何具体站源逻辑。
-- ⭐ **版本开关改用 Go build tag**：上游已移除旧的 linker 变量
-  `core.buildAllSources`，改为 `hongguojian` / `zhenguojian` 两个 build tag
-  （由站源包里的 `flavor_*.go` 决定注册哪些站源）。构建脚本随之改用
-  `-tags=<版本名>`，旧的 `-X .../core.buildAllSources=true` 已不再生效。
-- `apply_fork_overlay.py` 改为逐文件覆盖 `native/sources/`（不再整目录删除），
-  并在合入后生成 `native/go.work` 与 `native/bridge/sources_gen.go` 接入本仓
-  的站源包；这两个文件上游不入库，每次构建重新生成。
+- 界面全面换新：移植 fork PitayaDrama 的 redfruit 风格重构——「推荐」页改为沉浸式 hero（大图/视频预览、信息面板、「接下来」预览行），「剧场」加精选横幅与海报角标，「追剧」合并继续观看与我的追剧并显示更新角标，详情页换新头部（评分/上线/热度、系列分组、分段选集网格、观看下一部/重新观看），播放器换 Apple TV 风格控制层，搜索改原生搜索页（打开先看「大家都在看」），「我的」改个人中心面板，另有骨架屏、统一错误文案与封面缓存优化等。
+- 行为修正：只有全屏观看才计入观看记录（同 PitayaDrama）。
+- 红果「出品方」功能保留：详情页出品方入口与出品方页在新界面下继续可用。
+- 核心仍停在 fa7d948：2.46 曾由自动同步升至 e8bebee，但该核心已跨过上游站源私有化点（构建未发布），本版起指针退回 fa7d948；PitayaDrama 后续跟随的 0f587ed/c2eaee4 核心未移植（无真实站源）。
 
 ## 2.46
 

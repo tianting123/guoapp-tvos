@@ -4,8 +4,9 @@ import Foundation
 ///
 /// tvOS 上没有系统级 SMB 挂载，这里用自己的 SMB2 客户端直连，
 /// 读写共享目录里的一个 JSON 文件。
-final class SMBStore: StorageBackend {
-    let displayName = "SMB 共享"
+/// Swift 6：连接句柄是可变状态，用 actor 隔离，避免跨隔离域传递时报并发错误。
+actor SMBStore: StorageBackend {
+    nonisolated let displayName = "SMB 共享"
 
     private let host: String
     private let port: Int
@@ -39,7 +40,8 @@ final class SMBStore: StorageBackend {
     }
 
     /// 当前配置是否与给定配置一致（用于判断能否复用已有连接）。
-    func matches(_ settings: StorageSettings) -> Bool {
+    /// 纯比较，不碰连接句柄，标 nonisolated 便于在同步上下文里问。
+    nonisolated func matches(_ settings: StorageSettings) -> Bool {
         host == settings.smbHost
             && port == settings.smbPort
             && share == settings.smbShare
@@ -49,7 +51,7 @@ final class SMBStore: StorageBackend {
     }
 
     /// 共享内的文件路径。
-    private var remotePath: String {
+    nonisolated private var remotePath: String {
         var path = "\\" + fileName
         let trimmed = directory.trimmingCharacters(in: CharacterSet(charactersIn: "/\\"))
         if !trimmed.isEmpty {
@@ -118,8 +120,8 @@ final class SMBStore: StorageBackend {
     }
 
     /// 断开连接（切换配置或退出时调用）。
-    func disconnect() {
-        client?.disconnect()
+    func disconnect() async {
+        await client?.disconnect()
         client = nil
     }
 }

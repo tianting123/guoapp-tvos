@@ -7,7 +7,9 @@ import Network
 /// CREATE → READ / WRITE → CLOSE。够用来读写共享目录里的一个状态文件。
 ///
 /// 只做 SMB 2.0.2 / 2.1，不支持 SMB1、不支持加密、不支持多通道。
-final class SMB2Client {
+/// Swift 6：连接、握手状态、收发缓冲都是可变状态，
+/// 用 actor 隔离，避免跨隔离域传递时报并发错误。
+actor SMB2Client {
     private let host: String
     private let port: Int
     private let username: String

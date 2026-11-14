@@ -1,17 +1,22 @@
 name: Sync upstream core
 
-# 定期自动同步上游核心：把 submodule 指针（upstream/）更新到上游 main 最新，
-# 推到 main 后自动触发 tvOS 构建发布（build.yml）。
-# 有更新时还会自动递增 VERSION 并在 CHANGELOG 补一节，确保每次同步都能发布新 Release。
-# 若上游无更新，不做任何事；若构建失败，GitHub 会发失败通知，届时可手动回退指针。
+# 定期自动同步上游核心：把 submodule 指针（upstream/）更新到上游 main 最新。
 #
-# 注意：本工作流依赖 submodule 转换已落地（upstream/ 已是 submodule）。
-# 若 submodule 尚未落地，本工作流会失败。
+# ⭐ 关键设计：先在同一次运行里「预检构建」，通过后才推 main。
+# 旧版工作流是「先推 main、再触发构建」——一旦 fork 补丁打不上（上游改了同处代码），
+# main 就已经被写坏，只能人工回退指针。2026-11-11 那次就是这样坏的
+# （提交 14616c0「核心指针退回 fa7d948」是人工补救）。
+# 现在预检不过就不推 main，main 保持原样，GitHub 发失败通知即可。
+#
+# 有更新时还会自动递增 VERSION 并在 CHANGELOG 补一节，确保每次同步都能发布新 Release。
+# 若上游无更新，不做任何事。
 
 on:
   schedule:
-    # 每隔天 03:17 UTC（北京时间 11:17）检查一次上游（按当月奇数日触发；月底 31 日→次月 1 日会连着两天，无碍）。
-    - cron: '17 3 */2 * *'
+    # 每天 03:17 UTC（北京时间 11:17）检查一次上游。
+    # 之前是 '*/2'（隔天），实际因「上游跨过站源私有化点」等问题被手动禁用过；
+    # 现在改成每天跑，靠「预检通过才推」保证不会写坏 main。
+    - cron: '17 3 * * *'
   workflow_dispatch:  # 手动触发，便于立即测试
 
 permissions:
@@ -25,11 +30,13 @@ concurrency:
 jobs:
   sync:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
+          fetch-depth: 0
+
       - name: 更新 submodule 到上游最新 main
         id: update
         run: |
@@ -45,6 +52,35 @@ jobs:
             echo "上游核心有更新："
             git -C upstream log --oneline -5
           fi
+
+      # ⭐ 预检 1：先确认 fork 补丁在新版上游上还能打上。
+      # 补丁打不上说明上游改了同一处代码，需要人工把补丁重排到新版上；
+      # 这时直接失败退出，不动 main。
+      - name: 预检：fork 补丁能否在新版上游上合入
+        if: steps.update.outputs.changed == 'true'
+        run: |
+          set -euo pipefail
+          python3 scripts/apply_fork_overlay.py
+          echo "fork 覆盖层在新版上游上合入成功。"
+
+      # ⭐ 预检 2：Go 核心能不能编过。核心编不过就别推 main。
+      - name: 预检：Go 核心编译与测试
+        if: steps.update.outputs.changed == 'true'
+        working-directory: upstream/native
+        run: |
+          set -euo pipefail
+          go version
+          go build ./...
+          go test ./core/...
+
+      # ⭐ 预检 3：tvOS 应用能不能编过。
+      # 这一步最贵（约 10~20 分钟），但能挡住「补丁打上了、Swift 却编不过」的坏同步。
+      - name: 预检：tvOS 应用构建
+        if: steps.update.outputs.changed == 'true'
+        run: |
+          set -euo pipefail
+          python3 scripts/build_tvos.py --all-sources
+
       - name: 自动提升版本号并补更新日志
         id: bump
         if: steps.update.outputs.changed == 'true'
@@ -54,7 +90,7 @@ jobs:
           NEW_SUBJECT="$(git -C upstream log -1 --format=%s)"
           export NEW_COMMIT NEW_SUBJECT
           python3 - <<'PYEOF'
-          import os
+          import os, re
           raw = open('VERSION').read()
           ver = raw.strip()
           head, dot, tail = ver.rpartition('.')
@@ -63,7 +99,6 @@ jobs:
           open('VERSION', 'w').write(new_ver + ('\n' if raw.endswith('\n') else ''))
           # 关于页版本与根 VERSION 统一：工程里的 MARKETING_VERSION 也同步，
           # 否则下次发版后 Xcode 直接构建又会显示旧版本。
-          import re
           pbx = 'tvos/GuoAppTV/GuoAppTV.xcodeproj/project.pbxproj'
           text = open(pbx).read()
           text2, n = re.subn(r'MARKETING_VERSION = [^;]+;',
@@ -77,12 +112,30 @@ jobs:
                      f'（{os.environ["NEW_SUBJECT"]}）。本次仅更新 Go 核心'
                      f'（submodule 指针），tvOS 应用代码无改动。\n\n')
           lines = open('CHANGELOG.md').read().splitlines(keepends=True)
-          idx = next((i for i, ln in enumerate(lines)
-                      if ln.startswith('## ') and '未发布' not in ln), len(lines))
+          # 插到第一个比新版本号大的数字版本节之前（保持版本号倒序）。
+          def version_key(title):
+              parts = title.split('.')
+              try:
+                  return tuple(int(p) for p in parts)
+              except ValueError:
+                  return None
+          new_key = version_key(new_ver)
+          idx = len(lines)
+          for i, ln in enumerate(lines):
+              if not ln.startswith('## '):
+                  continue
+              title = ln[3:].strip()
+              if '未发布' in title:
+                  continue
+              key = version_key(title)
+              if key is not None and new_key is not None and key > new_key:
+                  idx = i
+                  break
           lines[idx:idx] = [section]
           open('CHANGELOG.md', 'w').write(''.join(lines))
           print(f'VERSION -> {new_ver}，CHANGELOG 已补一节，pbxproj MARKETING_VERSION 已同步')
           PYEOF
+
       - name: 提交并推送（指针 + 版本 + 更新日志）
         if: steps.update.outputs.changed == 'true'
         run: |
@@ -92,6 +145,7 @@ jobs:
           git add upstream VERSION CHANGELOG.md tvos/GuoAppTV/GuoAppTV.xcodeproj/project.pbxproj
           git commit -m "同步上游核心到 ${NEW_COMMIT:0:7}（${NEW_SUBJECT}），版本升至 ${{ steps.bump.outputs.version }}"
           git push origin HEAD:main
+
       - name: 触发 tvOS 构建发布
         if: steps.update.outputs.changed == 'true'
         env:

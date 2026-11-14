@@ -94,7 +94,7 @@ struct StorageSettingsView: View {
                 }
                 TVSettingRow {
                     settings.kind = kind
-                    save()
+                    Task { await save() }
                 } label: {
                     HStack {
                         VStack(alignment: .leading, spacing: 5) {
@@ -300,7 +300,7 @@ struct StorageSettingsView: View {
         decomposeWebDAVURL(settings.webdavURL)
     }
 
-    private func save() {
+    private func save() async {
         var updated = settings
         updated.smbPort = Int(smbPortText) ?? 445
         // 分段拼出的地址才是准的（settings.webdavURL 可能还是老的整段值）。
@@ -315,18 +315,18 @@ struct StorageSettingsView: View {
         }
         settingsStore.settings = updated
         // 配置变了就换掉 Store 手里的远端后端，否则它还在连旧地址。
-        store.reloadRemoteBackend()
+        await store.reloadRemoteBackend()
     }
 
     private func testConnection() async {
-        save()
+        await save()
         busy = true
         status = await store.testConnection()
         busy = false
     }
 
     private func backup() async {
-        save()
+        await save()
         busy = true
         await store.backupNow()
         status = store.remoteStatus
@@ -334,7 +334,7 @@ struct StorageSettingsView: View {
     }
 
     private func restore() async {
-        save()
+        await save()
         busy = true
         await store.restoreNow()
         status = store.remoteStatus

@@ -4,7 +4,8 @@ import Foundation
 ///
 /// 认证支持 Basic 与 Digest —— 群晖的 WebDAV 默认走 Digest，老一些的配置是 Basic，
 /// 两种都试一次，先成功哪个用哪个。
-final class WebDAVStore: StorageBackend {
+/// Swift 6：Digest 认证要缓存服务端 challenge（可变状态），用 actor 隔离。
+actor WebDAVStore: StorageBackend {
     let displayName = "WebDAV 备份"
 
     private let baseURL: URL
