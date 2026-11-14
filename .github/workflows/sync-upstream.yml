@@ -2,11 +2,14 @@ name: Sync upstream core
 
 # 定期自动同步上游核心：把 submodule 指针（upstream/）更新到上游 main 最新。
 #
-# ⭐ 关键设计：先在同一次运行里「预检构建」，通过后才推 main。
+# ⭐ 关键设计：先在 Ubuntu 上做「预检」，通过后才推 main。
+# 预检包含两项：① fork 覆盖层在新版上游上能否合入（补丁打不上就别推）；
+# ② Go 核心能否编译与测试通过（核心编不过也别推）。
 # 旧版工作流是「先推 main、再触发构建」——一旦 fork 补丁打不上（上游改了同处代码），
 # main 就已经被写坏，只能人工回退指针。2026-11-11 那次就是这样坏的
 # （提交 14616c0「核心指针退回 fa7d948」是人工补救）。
 # 现在预检不过就不推 main，main 保持原样，GitHub 发失败通知即可。
+# tvOS 真机构建（需要 Xcode）放在 macos 上的 build.yml，由本工作流在推送后触发。
 #
 # 有更新时还会自动递增 VERSION 并在 CHANGELOG 补一节，确保每次同步都能发布新 Release。
 # 若上游无更新，不做任何事。
@@ -73,13 +76,10 @@ jobs:
           go build ./...
           go test ./core/...
 
-      # ⭐ 预检 3：tvOS 应用能不能编过。
-      # 这一步最贵（约 10~20 分钟），但能挡住「补丁打上了、Swift 却编不过」的坏同步。
-      - name: 预检：tvOS 应用构建
-        if: steps.update.outputs.changed == 'true'
-        run: |
-          set -euo pipefail
-          python3 scripts/build_tvos.py --all-sources
+      # ⭐ tvOS 真机构建无法在 Ubuntu 上跑（需要 Xcode / appletvos SDK），
+      # 假设施加的纯上游核心同步只动 submodule 指针与版本号，不动 tvOS Swift 代码，
+      # 因此把「Swift 能不能编过」交给下方触发后的 build.yml（在 macos-latest 上构建）。
+      # 若后续同步开始改写 tvOS 源码，应改为在 macos  runner 上做预检后再推 main。
 
       - name: 自动提升版本号并补更新日志
         id: bump
