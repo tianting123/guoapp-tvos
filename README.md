@@ -8,6 +8,8 @@
 > 的 tvOS 版（独立 SwiftUI 应用），与主仓库只共享 Go 核心与 `DuanjuRequest` JSON 协议；
 > 上游维护者建议拆独立仓（见 [Issue #13](https://github.com/Xanerix/guoapp/issues/13)），
 > 本仓即按该建议拆出。上游的 Flutter 应用仍在原仓库维护。
+> 完整继承关系、改了什么、解决了什么问题，见下文
+> [「Fork 了哪些上游项目，解决了什么问题」](#fork-了哪些上游项目解决了什么问题)。
 
 ## 功能
 
@@ -37,6 +39,11 @@
 > - 与核心的请求分两条通道：播放类一个一个来，其余最多 4 个并行（封面更快）；搜索、联想词连续输入时旧的请求被取消。
 > - 「剧场」：顶部「今日主推」（立即观看 / 详情），海报右上角显示总集数；换分类时网格变暗并在分类行下转圈。
 > - 看完且没有下一部的剧，详情页主按钮为「重新观看」（从第 1 集开头）。
+> - **远端存储**：「设置 › 存储与关于」可把追剧与观看进度写入 **SMB 共享**（自研 SMB2
+>   客户端）或 **WebDAV**，同步频率可选不自动 / 3 / 10 / 30 / 60 / 300 秒，
+>   另有「立即备份 / 立即恢复」。默认仍以本地为主，远端读取失败自动回退本地。
+> - **站源登录**：红果支持设备注册后登录（「设置 › 站源账号」），青空支持账号登录与
+>   滑块验证（遥控器方向键完成轨迹）；播放失败提示含「登录」时可直接跳到登录页。
 
 **未移植**：下载、局域网互联。
 
@@ -45,36 +52,97 @@
 - 火龙果短剧（hongguojian）：仅红果站源
 - 真果鉴（zhenguojian）：全部站源
 
-## 与上游共享的部分
+## Fork 了哪些上游项目，解决了什么问题
 
-- **Go 核心**：`upstream/` 是上游仓库 [Xanerix/guoapp](https://github.com/Xanerix/guoapp)
-  的 **git submodule**，Go 核心在 `upstream/native/`，当前指向 commit
-  `0b48331`（1.0.9+109）。本仓与上游共享 Go 核心与 `DuanjuRequest` JSON 协议。
-  每次同步上游都会更新指针，具体 commit 以 `git submodule status` 为准
-  （`CHANGELOG.md` 每次同步都会记一笔）。
-- **播放协议**：播放地址、解密密钥等由 Go 核心通过 JSON 协议提供。
-- **站源包**：上游已把 15 个官方站源搬进独立 Go 包 `native/sources`，并移入
-  **私有仓库**（公开仓库只剩不联网的示例站源）。本仓自带 `fork/sources/`
-  站源包（取自上游 `62fb9d4` 公开可见的 `native/sources/`，53 个文件），
-  构建时覆盖上游的 `native/sources/`，保证站源可用且构建可复现，不依赖
-  上游的私有站源仓库。
-- **本地核心改动**：`fork/` 是本仓对上游核心的覆盖层，分两部分：
-  - `fork/sources/`：站源包。红果出品方功能在这里实现
-    （`provider_hongguo_producer.go`：解析搜索/列表载荷的 `copyright`、
-    按出品方精确过滤片单、用网页详情补上线日期）。
-  - `fork/patches/`：对 core 的最小改动 —— `Drama` / `LibraryDrama` 增加
-    `Producer` 字段、`nativeDispatch` 增加 `producerDramas` 与
-    `producerWorks` 两个动作。出品方能力通过可选接口 `ProducerProvider`
-    由站源实现，core 不内置任何具体站源逻辑。
+本仓不是凭空写的应用，而是**基于上游的 Go 核心与协议，重新实现了一层 tvOS 界面**。
+下面按「继承了什么 / 改了什么 / 解决什么问题」逐条说明。
 
-  构建时由 `scripts/build_tvos.py` 先跑 `scripts/apply_fork_overlay.py` 合入
-  submodule 工作区；补丁打不上构建直接失败，需人工重排到新版上游。
-  不要直接改 `upstream/` 里的文件。
-- **版本开关**：上游已移除旧的 linker 变量 `core.buildAllSources`，改用 Go
-  build tag `hongguojian` / `zhenguojian`（由站源包里的 `flavor_*.go`
-  决定注册哪些站源）。构建脚本按版本传 `-tags=<版本名>`。
+### 1. `Xanerix/guoapp` —— 上游 Go 核心（以 submodule 继承，不改上游仓库）
+
+| | |
+| --- | --- |
+| **仓库** | [Xanerix/guoapp](https://github.com/Xanerix/guoapp)（Dart + Go，GPL-3.0，1.5k star）|
+| **继承方式** | `upstream/` 是 git submodule，**不 fork、不改上游仓库**，只跟踪它的 commit 指针 |
+| **拿到的** | `native/` 下的 Go 核心：站源调度、榜单与推荐、搜索、详情、播放地址与 CENC 解密密钥、`DuanjuRequest` JSON 协议 |
+
+**解决的问题**：站源解析、签名算法、播放解密这些逻辑复杂且随站源方频繁变动，
+重写一遍成本极高、而且会立刻过时。本仓直接复用上游维护的核心，
+**只在 UI 层做 tvOS 原生化**，上游修 bug 或加站源时本仓可以跟着升级。
+
+**我们自己的改动**（不改上游仓库，而是用 `fork/` 覆盖层在构建时叠加）：
+
+- `fork/patches/`（3 个补丁，对上游 core 的**最小**改动）：
+  - `models.go`：`Drama` 增加 `Producer`（出品方）字段。
+  - `app_runtime.go`：`LibraryDrama` 增加 `Producer` 字段、归一化时透传，
+    `nativeDispatch` 增加 `producerDramas` / `producerWorks` 两个动作。
+  - `app_catalog_cache.go`：合并新旧片单时保留 `Producer`（缓存不回退出品方信息）。
+  - 设计上 **core 不内置任何具体站源逻辑** —— 出品方能力通过可选接口
+    `ProducerProvider` 由站源实现，core 只做协议转发与鉴权。
+- `fork/core/producer_core.go`（新增到 core 的文件）：`ProducerProvider` 接口与
+  `nativeProducerProvider` / `nativeProducerDramas` / `nativeProducerWorks` 的实现，
+  是上面两个动作的桥接。
+- `fork/sources/`（**54 个 Go 文件**，构建时整体覆盖上游 `native/sources/`）：
+  - 取自上游 `62fb9d4` 公开可见的站源包，保底可用；
+  - **解决的关键问题**：上游已把 15 个官方站源搬进**私有仓库**，公开仓库只剩
+    不联网的示例站源 —— 直接克隆上游会得到一个**没有任何可用站源**的空壳。
+    自带站源包后构建可复现，也不依赖上游的私有仓库是否开放。
+  - 在此基础上扩展：`provider_hongguo_device.go`（红果**设备注册**，
+    调 `log.snssdk.com` 换 device_id / install_id，拿不到就播放失败）、
+    `provider_hongguo_app.go`、`provider_hongguo_producer.go`（**出品方片单**：
+    按 `copyright` 精确过滤并用网页详情补上线日期）等。
+- `fork/sources/flavor_hongguojian.go` / `flavor_zhenguojian.go`：
+  按 build tag 注册不同站源集合，实现「火龙果短剧（仅红果）/ 真果鉴（全站源）」两个版本。
+
+**构建时如何叠加**：`scripts/build_tvos.py` 先跑 `scripts/apply_fork_overlay.py`，
+把补丁 `git apply` 到 submodule 工作区、把 `fork/core/` 与 `fork/sources/` 拷进去。
+**补丁打不上构建直接失败**，不会带着半成品出包。不要直接改 `upstream/` 里的文件。
+
+### 2. `MPVKit` —— 播放内核（libmpv），依赖而非 fork
+
+- **仓库**：[mpvkit/MPVKit](https://github.com/mpvkit/MPVKit)，SPM 依赖，
+  版本**严格锁定 `exactVersion 1.1.0-n9.0.2`**（`Package.resolved` 同步锁死），
+  构建带 `-onlyUsePackageVersionsFromResolvedFile`，不随上游自动升级。
+- **解决的问题**：红果源视频是 **CENC 加密**，密钥需传给解码器，
+  而 **AVPlayer 没有传原始密钥的接口** —— 用 AVPlayer 根本放不了红果源。
+  改用 libmpv 后，密钥经 FFmpeg demuxer 选项直传 libavformat。
+- 内置版本：mpv v0.41.0、FFmpeg n9.0.2、libplacebo v7.360.1、MoltenVK v1.4.2。
+- 许可证：MPVKit 本身 **LGPL-3.0**，其内置 libmpv 来自 mpv（GPL-2.0-or-later）。
+  分发前请以 MPVKit 仓库的 LICENSE 与对应 Release 说明为准。
+
+### 3. `mpv` 本身 —— 通过 MPVKit 间接使用，不直接 fork
+
+- **上游**：[mpv/mpv](https://github.com/mpv/mpv)（GPL-2.0-or-later）本身**没有官方 tvOS 支持**。
+- **我们不直接引入 mpv**，而是通过 MPVKit 使用它 —— MPVKit 1.1.0-n9.0.2 已提供
+  tvOS 平台构建（含 MoltenVK 图形后端、FFmpeg n9.0.2），本仓不需要自行把 mpv 移植到 tvOS。
+- **许可证区分**：MPVKit 自身是 **LGPL-3.0**，但它内置的 libmpv 来自 mpv（**GPL-2.0-or-later**），
+  因此整体分发仍受 GPL 条款约束。
+- **补丁归属**：MPVKit 上游自己给 libmpv 打了 3 个补丁（MoltenVK 上下文、tvOS 的
+  AVFoundation 音频输出等），在本仓的 `fork/` 里**没有**任何 libmpv 补丁 ——
+  本仓对 mpv 只是通过 FFI（`DuanjuRequest` / `DuanjuFree`）调用，未改其源码。
+
+### 4. 上游的 Flutter 应用 —— **没有** fork
+
+上游主仓库维护的是 Flutter 客户端。本仓按上游维护者在
+[Issue #13](https://github.com/Xanerix/guoapp/issues/13) 的建议**拆成独立仓**，
+SwiftUI 界面、播放逻辑、缓存与设置全部是本仓自己的实现，只共享 Go 核心与协议。
 
 ### 同步上游核心
+
+GitHub Actions 会**每天自动同步**（`.github/workflows/sync-upstream.yml`，
+UTC 03:17 / 北京 11:17，也可手动触发）：
+
+1. `git submodule update --remote -- upstream` 把核心指针更新到上游 `main` 最新；
+2. **预检**（Ubuntu 上跑，便宜）：① `fork/` 补丁在新版上游上还能不能合入；
+   ② Go 核心能否 `go build` + `go test` 通过。**任何一项不过就不推 main**，
+   GitHub 发失败通知等人工处理 —— 避免出现「补丁打不上却把 main 写坏」；
+3. 有更新才动：自动递增 `VERSION`、在 `CHANGELOG.md` 补一节、同步
+   `project.pbxproj` 的 `MARKETING_VERSION`，然后推送 main；
+4. 推送后触发 `build.yml`（在 **macOS** runner 上用 Xcode 真机编译双 flavor IPA
+   并发布 Release）。
+
+无上游更新时不做任何事。
+
+手动同步（不依赖 CI）：
 
 ```sh
 cd upstream
@@ -85,33 +153,22 @@ git add upstream
 git commit -m "同步上游核心到 <commit>"
 ```
 
-同步后跑一次 `python3 scripts/build_tvos.py`（或跑 CI）确认通过，并在
-`CHANGELOG.md`「未发布」一节记一笔同步到的 commit。注意：submodule 指针
-固定在某个 commit，不会自动跟随上游 main；CI 会随本仓一起拉取该指针
-对应的核心版本，构建结果可复现。
+同步后跑一次 `python3 scripts/build_tvos.py`（或跑 CI）确认通过。
 
-## 播放：MPVKit（libmpv），不是 AVPlayer
+## 存储：本地为主，可选 SMB / WebDAV 远端
 
-红果源视频是 CENC 加密，密钥需传给解码器；AVPlayer 没有传原始密钥的接口，
-因此播放改用 [MPVKit](https://github.com/mpvkit/MPVKit)（libmpv），密钥经
-FFmpeg demuxer 选项直传 libavformat。
+tvOS 沙盒限制：真机上只有 Caches 与 tmp 可写，核心数据、追剧与观看进度默认存
+Caches。**系统在存储不足时可能清理 Caches**，追剧与进度可能丢失。
 
-- MPVKit 在工程中要求 `upToNextMajorVersion`（最低 1.1.0-n9.0.2），实际版本由提交进仓库的
-  `Package.resolved` 锁定为 **1.1.0-n9.0.2**（SPM 锁版本标准做法），不随上游自动升级；
-  构建脚本带 `-onlyUsePackageVersionsFromResolvedFile`，版本与锁文件不一致时直接报错。
-  升级时需同时改工程里的最低版本与 `Package.resolved`，并跑 CI 验证。
-  注意：SwiftPM 只在范围的下限（或上限）带预发布标记时才接受预发布版本，所以下限要写
-  预发布号；写 `1.0.0` 时锁定的 `1.1.0-n9.0.2` 不在范围内，Xcode 27 会静默改装 `1.0.0`。
-- MPVKit 1.1.0-n9.0.2 内置：mpv v0.41.0、FFmpeg n9.0.2、libplacebo v7.360.1、MoltenVK v1.4.2。
-- 许可证：MPVKit 本身为 **LGPL-3.0**（见其仓库 LICENSE）；其内置的 libmpv 来自
-  mpv（GPL-2.0-or-later），FFmpeg 的许可取决于 MPVKit 的构建配置（1.0.0 起已移除
-  `--enable-nonfree`）。分发前请以 MPVKit 仓库的 LICENSE 与对应 Release 说明为准。
+设置页「存储与关于」可配置远端存储，把状态 JSON 写出去，应用每次启动再拉回来：
 
-## 存储：追剧与进度在 Caches
-
-tvOS 沙盒限制：真机上只有 Caches 与 tmp 可写，核心数据、追剧与观看进度都存在
-Caches。**系统在存储不足时可能清理 Caches**，追剧与进度可能丢失；设置页「关于」
-区有同样提示。需要长期保存时请及时看完或记下进度。
+- **SMB 共享**（主要方式）：自研 SMB2 客户端（`Core/SMB2Protocol.swift`、
+  `SMB2Client.swift`），支持 NTLMv2 认证（`NTLM.swift` + `Hashing.swift`，
+  含 MD4/MD5/HMAC-MD5）、读写、覆盖写时截断旧尾部。
+- **WebDAV**（备份方式）：Basic / Digest 认证，支持 PROPFIND、MKCOL、PUT、GET。
+- **同步频率**：不自动同步 / 每 3 / 10 / 30 / 60 / 300 秒；观看进度约每 5 秒落一次
+  本地盘并重置远端防抖计时，远端任务等所选间隔后写入。「立即备份 / 立即恢复」手动触发。
+- 未配置远端时行为与纯本地一致；远端读取失败会回退到本地副本。
 
 ## 构建
 
@@ -156,15 +213,18 @@ python3 scripts/deploy_tvos.py [--all-sources]
 
 | 目录 / 文件 | 说明 |
 | --- | --- |
-| `tvos/` | Apple TV 原生应用（SwiftUI + Go 核心 + MPVKit） |
-| `upstream/` | 上游仓库 git submodule，Go 核心在 `upstream/native/`（见上文「与上游共享的部分」） |
-| `fork/sources/` | 本仓自带的站源包（覆盖上游 `native/sources/`），含红果出品方实现 |
+| `tvos/GuoAppTV/GuoAppTV/Core/` | 应用核心：`Client`（Go 协议）、`Store`（状态与同步）、`Models`、`StorageBackend` / `SMB2Client` / `WebDAVStore`（远端存储）、`NTLM` / `Hashing`（认证）、`SourceAccount`（站源账号）、`Logic/`（28 个业务逻辑模块） |
+| `tvos/GuoAppTV/GuoAppTV/Views/` | 界面：首页 / 搜索 / 详情 / 剧场 / 我的、播放器（`PlayerView` + `PlayerController` + `PlaybackSession` + `PlayerControlsView`）、`StorageSettingsView`、`SourceAccountView`、`SliderCaptchaView` |
+| `tvos/LogicTests/` | 逻辑层单元测试（28 个文件） |
+| `upstream/` | 上游仓库 git submodule，Go 核心在 `upstream/native/`（见上文「Fork 了哪些上游项目」） |
+| `fork/sources/` | 本仓自带的站源包（覆盖上游 `native/sources/`，54 个文件），含红果出品方与设备注册实现 |
 | `fork/patches/` | 对上游 core 的最小补丁（`Producer` 字段与两个 action） |
 | `fork/core/` | 新增到上游 core 的文件（出品方能力桥接） |
 | `scripts/build_tvos.py` | 构建脚本：先编 Go 核心为 xcframework，再用 xcodebuild 出包 |
 | `scripts/apply_fork_overlay.py` | 把 `fork/` 的改动合入 submodule 工作区（幂等） |
 | `scripts/deploy_tvos.py` | 签名构建并安装、启动到已配对的 Apple TV |
 | `.github/workflows/build.yml` | CI：构建两个版本并发布 Release |
+| `.github/workflows/sync-upstream.yml` | 每日自动同步上游核心（预检通过才推 main） |
 | `VERSION` | 版本号 |
 | `CHANGELOG.md` | 更新日志 |
 

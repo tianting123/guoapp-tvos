@@ -143,7 +143,8 @@ jobs:
           tvOS：
           - *-tvos-unsigned.ipa：未签名 IPA，需在 Mac 上用 Xcode 签名后安装到 Apple TV
 
-          注意：追剧与观看进度存在 Caches，系统空间不足时可能被清理。
+          注意：追剧与观看进度默认存在 Caches，系统空间不足时可能被清理；
+          可在「设置 › 存储与关于」里配置 SMB 共享或 WebDAV 做远端存储与备份。
           EOF
           changes="$(awk -v heading="## ${VERSION}" '
             $0 == heading { found = 1; next }
