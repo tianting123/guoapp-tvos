@@ -92,13 +92,15 @@ actor SMB2Client {
         // MS-SMB2 2.2.3.1 NEGOTIATE Request。
         //
         // 布局（少一个字段服务端就会直接断开）：
-        // 0 StructureSize · 2 DialectCount · 4 SecurityMode · 8 Capabilities
-        // 12 ClientGuid(16) · 28 ContextOffset(4)+ContextCount(2)+Reserved2(2)
-        // 36 Dialects[]，之后是 negotiate context。
-        // 声明 0x0311 就必须带 context（预认证完整性哈希 + 加密能力）。
+        // 0 StructureSize(36) · 2 DialectCount · 4 SecurityMode · 6 Reserved
+        // 8 Capabilities · 12 ClientGuid(16) · 28 ClientStartTime(8) · 36 Dialects[]
+        //
+        // ⭐ 只声明到 0x0302（见 SMB2.supportedDialects），所以不需要
+        // negotiate context —— 偏移 28 之后是 ClientStartTime，不是
+        // ContextOffset/ContextCount。
         var body = [UInt8](repeating: 0, count: 36)
         body[0] = 0x24   // StructureSize = 36
-        body[2] = 0x05   // DialectCount = 5
+        body[2] = UInt8(SMB2.supportedDialects.count)
         body[4] = 0x01   // SecurityMode: signing enabled
         body[8] = 0x40   // Capabilities = SMB2_GLOBAL_CAP_ENCRYPTION
         // ClientGuid：必须是合法的 RFC 4122 UUID（版本 4），服务端会校验格式。
@@ -108,61 +110,12 @@ actor SMB2Client {
         for index in 0..<16 {
             body[12 + index] = guid[index]
         }
+        // 偏移 28-35：ClientStartTime（8 字节，0 即可）
         // dialect 数组从偏移 36 开始
         for dialect in SMB2.supportedDialects {
             body.append(UInt8(dialect & 0xff))
             body.append(UInt8((dialect >> 8) & 0xff))
         }
-        // dialect 之后补齐到 8 字节对齐，再放 negotiate context
-        while body.count % 8 != 0 {
-            body.append(0xff)
-        }
-        let contextStart = body.count
-        // ContextOffset 相对 SMB2 报文头起点（含 64 字节头），差 64 字节就找不到 context
-        let contextOffset = UInt32(SMB2.headerSize + contextStart)
-        body[28] = UInt8(contextOffset & 0xff)
-        body[29] = UInt8((contextOffset >> 8) & 0xff)
-        body[30] = UInt8((contextOffset >> 16) & 0xff)
-        body[31] = UInt8((contextOffset >> 24) & 0xff)
-        body[32] = 0x02  // ContextCount = 2
-
-        // Context 1：PREAUTH_INTEGRITY_CAPABILITIES
-        //   HashAlgorithmCount=1 · HashAlgorithms=SHA-512 · Salt=32 字节随机
-        let salt = (0..<32).map { _ in UInt8.random(in: 0...255) }
-        var preauth = [UInt8]()
-        preauth.append(0x01)
-        preauth.append(0x00)
-        preauth.append(0x20)
-        preauth.append(0x00)
-        preauth.append(0x01)
-        preauth.append(0x00)
-        preauth.append(contentsOf: salt)
-        body.append(0x01)
-        body.append(0x00)
-        body.append(UInt8(preauth.count & 0xff))
-        body.append(UInt8((preauth.count >> 8) & 0xff))
-        body.append(0x00)
-        body.append(0x00)
-        body.append(0x00)
-        body.append(0x00)
-        body.append(contentsOf: preauth)
-        while body.count % 8 != 0 {
-            body.append(0xff)
-        }
-
-        // Context 2：ENCRYPTION_CAPABILITIES（CipherCount=1 · AES-128-GCM）
-        body.append(0x02)
-        body.append(0x00)
-        body.append(0x04)
-        body.append(0x00)
-        body.append(0x00)
-        body.append(0x00)
-        body.append(0x00)
-        body.append(0x00)
-        body.append(0x01)
-        body.append(0x00)
-        body.append(0x01)
-        body.append(0x00)
 
         let response = try await send(
             command: SMB2.commandNEGOTIATE,
@@ -199,25 +152,25 @@ actor SMB2Client {
     // MARK: - SESSION_SETUP（NTLMv2）
 
     private func sessionSetup() async throws {
-        // 第一步：发送 NEGOTIATE 类型的 NTLMSSP 消息
-        let negotiateMessage = NTLM.negotiateMessage(domain: domain, workstation: "TV")
-        // SMB2_SESSION_SETUP 的结构体是 25 字节，但 SecurityBufferOffset/Length
-        // 在偏移 60/62，所以结构至少要 64 字节。
         // MS-SMB2 2.2.5.1 SESSION_SETUP Request：
-        // 0 StructureSize(25) · 2 Flags · 3 SecurityMode · 4 Capabilities(4)
+        // 0 StructureSize(25) · 2 Flags(1) · 3 SecurityMode(1) · 4 Capabilities(4)
         // 8 Channel(4) · 12 SecurityBufferOffset(2) · 14 SecurityBufferLength(2)
-        // 16 PreviousSessionId(8) · 24 对齐填充 · 88 SecurityBuffer
-        var firstBody = [UInt8](repeating: 0, count: 88)
+        // 16 PreviousSessionId(8) · 24 ← SecurityBuffer 从这里开始（紧跟结构体）
+        //
+        // ⭐ 两个关键点（都实测过，否则服务端一律回 0xC000000D）：
+        // 1. SecurityBufferOffset = 64（头）+ 24（结构体）= **88**，
+        //    buffer 必须**紧跟** 24 字节结构体，中间不能有填充。
+        // 2. SecurityBuffer 里是 **NTLMSSP 的 DER 封装**，不是裸 NTLM 消息。
+        //
+        /// 第一步：发送 NTLMSSP NEGOTIATE（DER 封装）。
+        let negotiateBuffer = NTLM.negotiateSecurityBuffer(domain: domain, workstation: "TV")
+        var firstBody = [UInt8](repeating: 0, count: 24)
         firstBody[0] = 0x19  // StructureSize = 25
         firstBody[2] = 0x00  // Flags
         firstBody[3] = 0x01  // SecurityMode = SMB2_NEGOTIATE_SIGNING_ENABLED
-        // SecurityBufferOffset = 88（64 字节头 + 24 字节结构体）
-        firstBody[12] = 0x58
-        firstBody[13] = 0x00
-        firstBody[14] = UInt8(SMB2.ntlmsspOID.count & 0xff)
-        firstBody[15] = UInt8((SMB2.ntlmsspOID.count >> 8) & 0xff)
-        firstBody.append(contentsOf: SMB2.ntlmsspOID)
-        firstBody.append(contentsOf: negotiateMessage)
+        putLE(&firstBody, 12, UInt16(SMB2.headerSize + 24))   // = 88
+        putLE(&firstBody, 14, UInt16(negotiateBuffer.count))
+        firstBody.append(contentsOf: negotiateBuffer)
 
         let first = try await send(
             command: SMB2.commandSESSION_SETUP,
@@ -238,9 +191,9 @@ actor SMB2Client {
             throw SMBError.authenticationFailed
         }
 
-        // 第二步：发送 NTLM 认证消息
+        // 第二步：发送 NTLMSSP AUTHENTICATE（DER 封装）。
         let clientChallenge = (0..<8).map { _ in UInt8.random(in: 0...255) }
-        let authenticate = NTLM.authenticateMessage(
+        let authenticateBuffer = NTLM.authenticateSecurityBuffer(
             domain: domain,
             username: username,
             password: password,
@@ -248,16 +201,12 @@ actor SMB2Client {
             targetInfo: challenge.targetInfo,
             clientChallenge: clientChallenge
         )
-        // 第二步：带 NTLM 认证消息，同样 88 字节结构 + SecurityBuffer
-        var secondBody = [UInt8](repeating: 0, count: 88)
+        var secondBody = [UInt8](repeating: 0, count: 24)
         secondBody[0] = 0x19
         secondBody[3] = 0x01  // SecurityMode = signing enabled
-        secondBody[12] = 0x58
-        secondBody[13] = 0x00
-        secondBody[14] = UInt8(SMB2.ntlmsspOID.count & 0xff)
-        secondBody[15] = UInt8((SMB2.ntlmsspOID.count >> 8) & 0xff)
-        secondBody.append(contentsOf: SMB2.ntlmsspOID)
-        secondBody.append(contentsOf: authenticate)
+        putLE(&secondBody, 12, UInt16(SMB2.headerSize + 24))   // = 88
+        putLE(&secondBody, 14, UInt16(authenticateBuffer.count))
+        secondBody.append(contentsOf: authenticateBuffer)
 
         let second = try await send(
             command: SMB2.commandSESSION_SETUP,

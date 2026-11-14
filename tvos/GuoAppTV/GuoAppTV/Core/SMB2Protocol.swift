@@ -35,9 +35,13 @@ enum SMB2 {
     ]
     /// 一次声明多个方言：部分 NAS 只在列表包含多个版本时才接受。
     ///
-    /// 声明 0x0311（SMB 3.1.1）时必须在 NEGOTIATE 里附带 negotiate context
-    /// （预认证完整性哈希 + 加密能力），少一个字段服务端就会直接断开连接。
-    static let supportedDialects: [UInt16] = [0x0202, 0x0210, 0x0300, 0x0302, 0x0311]
+    /// ⭐ 只声明到 **0x0302**（SMB 3.0.2），不声明 0x0311：
+    /// SMB 3.1.1 会启用 **预认证完整性哈希**（preauth integrity hash），
+    /// 服务端会校验 SESSION_SETUP 报文里带的哈希值 —— 自己算这个哈希要处理
+    /// negotiate context 的 salt 与 padding，实现复杂且容易出错。
+    /// 降到 3.0.2 就不需要它，协商与认证都简单得多，对本仓的用途（读写一个
+    /// JSON 文件）没有任何影响。
+    static let supportedDialects: [UInt16] = [0x0202, 0x0210, 0x0300, 0x0302]
 
     /// NTLMSSP 相关。
     static let ntlmsspOID: [UInt8] = [

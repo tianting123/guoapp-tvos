@@ -156,11 +156,22 @@ struct StorageSettingsView: View {
             TVSettingDivider()
             TVTextFieldRow(title: "文件名", placeholder: "tv-state.json", text: $settings.webdavFileName)
             TVSettingDivider()
+            TVTextFieldRow(
+                title: "证书指纹",
+                placeholder: "自签名证书才需要填",
+                text: $settings.webdavFingerprint
+            )
+            TVSettingDivider()
             Text("完整地址：\(webdavURLPreview)")
                 .font(.system(size: 18))
                 .foregroundColor(TVTheme.textTertiary)
                 .padding(.horizontal, 28)
                 .padding(.vertical, 14)
+            Text("自签名证书（如 fnOS、群晖自签）在用 IP 直连时，系统会报「证书无效 / 可能伪装成 …」。把服务器的 SHA-256 指纹填这里，程序就只信任这一张证书 —— 比「跳过全部校验」安全，伪造的证书仍会被拒绝。公共 CA 签发的证书留空即可。")
+                .font(.system(size: 17))
+                .foregroundColor(TVTheme.textTertiary)
+                .padding(.horizontal, 28)
+                .padding(.bottom, 14)
         }
     }
 

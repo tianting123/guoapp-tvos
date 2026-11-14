@@ -451,7 +451,8 @@ final class Store: ObservableObject {
                 baseURL: url,
                 fileName: settings.webdavFileName,
                 username: settings.webdavUsername,
-                password: settingsStore.webdavPassword()
+                password: settingsStore.webdavPassword(),
+                pinnedFingerprint: settings.webdavFingerprint
             )
         }
     }

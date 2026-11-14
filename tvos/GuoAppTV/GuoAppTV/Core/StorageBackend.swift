@@ -121,6 +121,15 @@ struct StorageSettings: Codable, Equatable {
     var webdavUsername: String = ""
     /// WebDAV：保存状态的文件名。
     var webdavFileName: String = "tv-state.json"
+    /// WebDAV：服务器证书的 SHA-256 指纹（大写十六进制，可含冒号）。
+    ///
+    /// 家庭 NAS（fnOS / 群晖）常用自签名证书，用 IP 直连时证书的 CN / SAN
+    /// 里根本没有那个 IP（fnOS 是 `CN=fnOS`，SAN 只有 `DNS:fnOS`），
+    /// 系统会直接拒绝握手、报「证书无效 / 可能伪装成 …」。
+    /// 填上指纹就只信任这一张证书 —— 伪造的证书仍然会被拒。
+    ///
+    /// 留空表示用系统默认校验（公共 CA 签发的证书不需要填）。
+    var webdavFingerprint: String = ""
 
     /// 该配置下可用的存储文件地址描述（界面显示用）。
     var locationSummary: String {

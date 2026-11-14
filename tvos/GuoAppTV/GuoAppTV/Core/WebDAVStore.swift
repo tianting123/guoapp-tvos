@@ -27,16 +27,42 @@ actor WebDAVStore: StorageBackend {
         var uri = ""
     }
 
-    init(baseURL: URL, fileName: String, username: String, password: String) {
+    /// 固定指纹：为空表示走系统默认的证书校验。
+    ///
+    /// 家庭 NAS（fnOS / 群晖）常用自签名证书，用 IP 直连时证书的 CN / SAN
+    /// 里根本没有那个 IP（fnOS 是 `CN=fnOS`，SAN 只有 `DNS:fnOS`），
+    /// 系统会直接拒绝握手、报「证书无效 / 可能伪装成 …」。
+    /// 填了指纹就只信任这一张证书 —— 比「跳过全部校验」安全得多。
+    ///
+    /// ⚠️ 指纹填错就连不上（这是故意的：宁可连不上，也不能在用户以为是
+    /// A 服务器的时候连上 B 服务器）。
+    private let pinnedFingerprint: String
+
+    init(
+        baseURL: URL,
+        fileName: String,
+        username: String,
+        password: String,
+        pinnedFingerprint: String = ""
+    ) {
         self.baseURL = baseURL
         self.fileName = fileName
         self.username = username
         self.password = password
+        self.pinnedFingerprint = CertificatePinning.normalize(pinnedFingerprint)
         let configuration = URLSessionConfiguration.default
         configuration.timeoutIntervalForRequest = 20
         configuration.timeoutIntervalForResource = 60
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
-        session = URLSession(configuration: configuration)
+        if self.pinnedFingerprint.isEmpty {
+            session = URLSession(configuration: configuration)
+        } else {
+            session = URLSession(
+                configuration: configuration,
+                delegate: PinnedCertificateDelegate(expected: self.pinnedFingerprint),
+                delegateQueue: nil
+            )
+        }
     }
 
     /// 状态文件地址。

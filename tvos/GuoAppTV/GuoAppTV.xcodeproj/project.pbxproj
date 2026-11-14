@@ -55,6 +55,7 @@
 		A10000000000000000000061 /* EpisodeNumberGrid.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000062 /* EpisodeNumberGrid.swift */; };
 		A1000000000000000000005F /* PlaybackLauncher.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000060 /* PlaybackLauncher.swift */; };
 		A1000000000000000000005D /* ResumeTarget.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000005E /* ResumeTarget.swift */; };
+		A1000000000000000000F003 /* CertificatePinning.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000F004 /* CertificatePinning.swift */; };
 		A1000000000000000000F001 /* SourceSwitch.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000F002 /* SourceSwitch.swift */; };
 		A1000000000000000000005B /* WatchStatus.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000005C /* WatchStatus.swift */; };
 		A10000000000000000000059 /* EpisodeRanges.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000005A /* EpisodeRanges.swift */; };
@@ -138,6 +139,7 @@
 		A10000000000000000000062 /* EpisodeNumberGrid.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EpisodeNumberGrid.swift; sourceTree = "<group>"; };
 		A10000000000000000000060 /* PlaybackLauncher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackLauncher.swift; sourceTree = "<group>"; };
 		A1000000000000000000005E /* ResumeTarget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Logic/ResumeTarget.swift; sourceTree = "<group>"; };
+		A1000000000000000000F004 /* CertificatePinning.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CertificatePinning.swift; sourceTree = "<group>"; };
 		A1000000000000000000F002 /* SourceSwitch.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Logic/SourceSwitch.swift; sourceTree = "<group>"; };
 		A1000000000000000000005C /* WatchStatus.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Logic/WatchStatus.swift; sourceTree = "<group>"; };
 		A1000000000000000000005A /* EpisodeRanges.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Logic/EpisodeRanges.swift; sourceTree = "<group>"; };
@@ -227,6 +229,7 @@ A10000000000000000000000 /* StorageBackend.swift */,
 				A10000000000000000000035 /* Hashing.swift */,
 				A10000000000000000020000 /* SourceAccount.swift */,
 				A1000000000000000000005A /* EpisodeRanges.swift */,
+				A1000000000000000000F004 /* CertificatePinning.swift */,
 				A1000000000000000000F002 /* SourceSwitch.swift */,
 				A1000000000000000000005C /* WatchStatus.swift */,
 				A1000000000000000000005E /* ResumeTarget.swift */,
@@ -411,6 +414,7 @@ A10000000000000000000037 /* StorageSettingsView.swift */,
 				A10000000000000000000055 /* PlayerControlsView.swift in Sources */,
 				A10000000000000000000057 /* PlayerController.swift in Sources */,
 				A10000000000000000000059 /* EpisodeRanges.swift in Sources */,
+				A1000000000000000000F003 /* CertificatePinning.swift in Sources */,
 				A1000000000000000000F001 /* SourceSwitch.swift in Sources */,
 				A1000000000000000000005B /* WatchStatus.swift in Sources */,
 				A1000000000000000000005D /* ResumeTarget.swift in Sources */,
