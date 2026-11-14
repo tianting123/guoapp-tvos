@@ -106,6 +106,38 @@ extension View {
     }
 }
 
+/// 设置类组件的焦点视觉：白色描边 + 提亮底色 + 轻微放大。
+///
+/// 与海报卡的 `tvFocusEffect` 分开：设置行是整行通栏的，放大 1.12 倍会顶出
+/// 分组圆角容器、显得很躁；这里用 1.02 倍的轻放大，重点靠**白色描边**——
+/// 电视是纯黑底，描边是最清晰的选中信号。背景从 surfaceDim 提到
+/// surfaceBright，配合描边后即使在 3 米外也能看出焦点在哪一行。
+private struct TVSettingFocusEffect: ViewModifier {
+    var focused: Bool
+
+    func body(content: Content) -> some View {
+        content
+            .scaleEffect(focused ? 1.02 : 1)
+            .background(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .fill(focused ? TVTheme.surfaceBright : TVTheme.surfaceDim)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .strokeBorder(Color.white.opacity(focused ? 0.95 : 0), lineWidth: 3)
+            )
+            .shadow(color: .black.opacity(focused ? 0.45 : 0), radius: focused ? 18 : 0, y: focused ? 8 : 0)
+            .animation(TVTheme.focusAnimation, value: focused)
+    }
+}
+
+extension View {
+    /// 设置类组件的焦点反馈。
+    func tvSettingFocus(_ focused: Bool) -> some View {
+        modifier(TVSettingFocusEffect(focused: focused))
+    }
+}
+
 // MARK: - 胶囊筛选按钮
 
 /// 分类 / 站源 / 榜单筛选胶囊。
@@ -451,15 +483,12 @@ struct TVSettingRow<Label: View>: View {
             .padding(.horizontal, 28)
             .padding(.vertical, 22)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .fill(focused ? TVTheme.surfaceBright : .clear)
-            )
             .contentShape(Rectangle())
         }
         .buttonStyle(TVPressButtonStyle())
         .focused($focused)
-        .animation(TVTheme.focusAnimation, value: focused)
+        // 焦点态给白色描边：电视纯黑底，背景色变化太弱，描边才看得清。
+        .tvSettingFocus(focused)
     }
 }
 
@@ -573,14 +602,22 @@ struct TVOptionSheet<Value: Hashable>: View {
                     }
                     .padding(.horizontal, 24)
                     .padding(.vertical, 18)
-                    .background(
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .fill(focused == option.value ? TVTheme.surfaceBright : .clear)
-                    )
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(TVPressButtonStyle())
                 .focused($focused, equals: option.value)
+                // 弹窗里的选项同样靠白描边区分焦点（背景色差太弱）。
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .strokeBorder(
+                            Color.white.opacity(focused == option.value ? 0.95 : 0),
+                            lineWidth: 3
+                        )
+                )
+                .background(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .fill(focused == option.value ? TVTheme.surfaceBright : .clear)
+                )
             }
         }
         .padding(32)
@@ -633,6 +670,8 @@ struct TVTextFieldRow: View {
     var isSecure: Bool = false
 
     @State private var editing = false
+    /// 行焦点：遥控器导航用。
+    @FocusState private var rowFocused: Bool
     /// 输入焦点：系统文本面板用。提到外层是因为 @FocusState 不能声明在
     /// 计算属性里。
     @FocusState private var inputFocused: Bool
@@ -645,6 +684,10 @@ struct TVTextFieldRow: View {
                 displayRow
             }
         }
+        .focused($rowFocused)
+        // 编辑态也要保持高亮：进编辑后键盘焦点被 TextField 拿走，行焦点会
+        // 变成 false，描边会消失 —— 用户就看不出自己在编辑哪一行了。
+        .tvSettingFocus(rowFocused || editing)
     }
 
     /// 显示态：整行可点按，点一下进入编辑。
@@ -670,10 +713,6 @@ struct TVTextFieldRow: View {
             .padding(.horizontal, 28)
             .padding(.vertical, 18)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .fill(TVTheme.surfaceDim)
-            )
             .contentShape(Rectangle())
         }
         .buttonStyle(TVPressButtonStyle())
@@ -707,10 +746,6 @@ struct TVTextFieldRow: View {
         .padding(.horizontal, 28)
         .padding(.vertical, 18)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(TVTheme.surfaceDim)
-        )
         .onAppear {
             // 进入编辑态后把键盘焦点交给输入控件，系统才会弹文本面板。
             DispatchQueue.main.async { inputFocused = true }
