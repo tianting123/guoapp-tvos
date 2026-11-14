@@ -2,22 +2,27 @@
 
 每个版本一节，标题为 `VERSION` 中的完整版本号。发布工作流会把对应一节写入 GitHub Release 说明。
 
-## 2.54
+## 2.55
 
-- **新增「站源开关」设置**：上游把一部分站源标成 `defaultOff`（默认关闭），
-  需要用户在设置里手动打开；上游 Dart 侧有对应的 `sourceSwitches` 设置与
-  `SourcesView` 页面，tvOS 版之前**完全没接** —— 核心上报的 15 个站源里，
-  那 11 个默认关闭的源既不出现在界面上、也无从打开。
-  现在设置页新增「站源开关」分组，每个源一个开关，关闭的源不出现在
-  首页站源条、搜索与追剧里，记录保留、重新打开后恢复。
-- **`SourceSite` 补齐 `defaultOff` / `available` 字段**：之前只解析了
-  `devices` / `account` / `vipPrompt`，核心给的这两个字段被丢掉了。
-- **站源清单改用核心上报的结果**：设置页原先直接调 `SourceSite.available(allSources:)`
-  走写死的 fallback 列表（只有 11 个，且缺禁果短剧 / 禁果 / 黑桃 / 笔盒 /
-  黄果视频 / 黄果 AI / 黄果旧版），现在统一用 `appState.availableSites`
-  （核心上报的 15 个）。
-- 新增 `Core/Logic/SourceSwitch.swift` 与对应单元测试（3 个），
-  站源开关的判定逻辑与上游 Dart 侧语义一致。
+- **修打包脚本漏传 Go build tag**：`scripts/build_tvos.py` 的 `build_core`
+  只传了 `-ldflags`，`app_build.py` 里定义好的 `go_arguments`（`-tags=`）从来没被使用，
+  导致两个 flavor 的核心都编成 `hongguojian` —— 「真果鉴」实际只有红果 1 个可用源。
+  修复后实测：火龙果短剧 `available=true` 的站源 1 个、真果鉴 15 个。
+- **新增 WebDAV 证书固定**：家庭 NAS 常用自签名证书、用 IP 直连时 CN/SAN 对不上，
+  系统会报「证书无效」。设置页新增「证书指纹」项（SHA-256，支持带冒号/小写），
+  只信任指定的那一张证书，伪造证书仍会被拒 —— 比「跳过校验」更安全。
+  实现见 `Core/CertificatePinning.swift`，指纹算法与 `openssl dgst -sha256` 对拍一致。
+- **修 SMB2 报文多处结构错误**（用 impacket 逐字节对拍）：
+  `TREE_CONNECT` 的 `PathOffset`（应为 72）、`SESSION_SETUP` 的
+  `SecurityBufferOffset`（应为 88，且 body 必须是 24 字节结构体 + buffer 紧跟）、
+  NTLMSSP 的 DER 封装（之前只发裸 OID）、type2 挑战解析（按 `NTLMSSP\0` 标志定位）、
+  type3 认证消息（长度+偏移分离式布局）、NTLMv2 响应（NTProof 后必须附 blob）、
+  以及读取文件时误用「不存在则创建」。
+- **NEGOTIATE 降到 0x0302**：避免声明 SMB 3.1.1 后需要实现 preauth integrity hash。
+- ⚠️ **已知限制：SMB 完整认证尚未跑通**。上面每一项都是确定性的协议 bug，
+  修复后 `NEGOTIATE → SESSION_SETUP#1 → NTLM 挑战` 已在真机 NAS 上实测通过，
+  但 `SESSION_SETUP#2` 之后服务端无响应（超时）—— 群晖在 3.0.2 方言下要求
+  报文签名 / 密钥交换，本版尚未实现。请勿把 SMB 当作已可用功能。
 
 ## 2.54
 
