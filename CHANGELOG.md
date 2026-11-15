@@ -2,6 +2,36 @@
 
 每个版本一节，标题为 `VERSION` 中的完整版本号。发布工作流会把对应一节写入 GitHub Release 说明。
 
+## 2.56
+
+- ⚠️ **更正上一版的错误结论**：`192.168.2.154:5006` **就是飞牛 fnOS 的 WebDAV HTTPS 服务**
+  （HTTP 是 5005）。之前只凭未认证时返回的 `401 Basic realm="Restricted"` +
+  `text/plain` 就断言「这是后台接口、不是 WebDAV」，证据不足 —— 认证前的 401 本就正常。
+  群晖 Cloud Sync 的 6690 与本场景无关。
+- **WebDAV 默认端口 6690 → 5006**，服务器栏示例改 `192.168.2.154`；
+  路径栏提示填 fnOS「可见文件夹范围」里的文件夹名；设置页补充 fnOS 配置说明。
+- **修地址拼接把整串地址拼成非法 URL**：用户把 `192.168.2.154:5006` 或
+  `https://192.168.2.154:5006/backup` 整串粘进「服务器」栏时，旧的四段拼接会
+  得到 `https://192.168.2.154:5006:6690/`（`URL(string:)` 返回 nil → 后端直接不创建
+  → 表现为「连不上」）。现在自动拆出 host / port / path，「完整地址」预览与实际
+  保存值统一走同一套解析。
+- **修「假连接成功」**：`Store.testConnection()` 原来写 `_ = try await probe()`，
+  忽略返回值，只要没抛错就显示「连接成功」；`WebDAVStore.probe()` 对 401/403/404
+  也只是返回 `false`，错误被吞掉。现在非 2xx 抛出带状态码的错误，UI 会显示
+  「认证失败 / 没有权限 / 找不到该地址」等可行动提示。
+- **PROPFIND 补 XML 请求体**（部分服务端对空 body 直接回 400）；
+  **401 不再无意义重试**：fnOS 只支持 Basic，旧实现遇到任何 401 都重发同一个
+  Basic 头；Digest 的 `uri` 也改为取本次请求路径（WWW-Authenticate 里没有这个字段）。
+- **错误信息加针对性提示**：TLS/证书类 `NSURLError` 提示填证书指纹，
+  连不上主机时提示核对协议与端口配对。
+- **构建脚本补三个开关**：`--skip-overlay`（Go 源码未改时跳过 fork overlay 的重复复制）
+  / `--skip-resolve`（依赖已解析时跳过 SPM 解析）/ 以及 xcodebuild 的
+  `-disableAutomaticPackageResolution`（避免 SwiftPM 重置 `~/.swiftpm/security`
+  失败后连带 `sandbox_apply: Operation not permitted`）。非交互 shell 还需把
+  `~/.local/toolchain/go/bin` 加进 PATH。
+- ⚠️ **SMB 完整认证仍未跑通**：见 2.55 的已知限制，`SESSION_SETUP#2` 之后
+  服务端无响应，与账号密码无关。请勿把 SMB 当作已可用功能。
+
 ## 2.55
 
 - **修打包脚本漏传 Go build tag**：`scripts/build_tvos.py` 的 `build_core`

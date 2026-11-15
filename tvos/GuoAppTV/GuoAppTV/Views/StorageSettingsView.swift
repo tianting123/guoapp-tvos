@@ -23,7 +23,9 @@ struct StorageSettingsView: View {
     /// 几乎没法用。这里只让用户填 IP 或域名，其余由程序拼好。
     @State private var webdavScheme = "https"
     @State private var webdavHost = ""
-    @State private var webdavPortText = "6690"
+    /// 飞牛 fnOS 的 WebDAV HTTPS 默认端口就是 5006（HTTP 是 5005）。
+    /// 群晖 Cloud Sync 的 WebDAV 才是 6690 —— 之前默认 6690 会把 fnOS 用户带偏。
+    @State private var webdavPortText = "5006"
     @State private var webdavPath = ""
     /// 协议选择弹窗。
     @State private var activeWebdavScheme = false
@@ -144,11 +146,11 @@ struct StorageSettingsView: View {
                 activeWebdavScheme = true
             }
             TVSettingDivider()
-            TVTextFieldRow(title: "服务器", placeholder: "192.168.2.99", text: $webdavHost)
+            TVTextFieldRow(title: "服务器", placeholder: "192.168.2.154", text: $webdavHost)
             TVSettingDivider()
-            TVTextFieldRow(title: "端口", placeholder: "6690", text: $webdavPortText)
+            TVTextFieldRow(title: "端口", placeholder: "5006", text: $webdavPortText)
             TVSettingDivider()
-            TVTextFieldRow(title: "路径", placeholder: "留空表示根目录", text: $webdavPath)
+            TVTextFieldRow(title: "路径", placeholder: "WebDAV 可见文件夹名，如 backup", text: $webdavPath)
             TVSettingDivider()
             TVTextFieldRow(title: "用户名", placeholder: "填写 NAS 账号", text: $settings.webdavUsername)
             TVSettingDivider()
@@ -171,43 +173,69 @@ struct StorageSettingsView: View {
                 .font(.system(size: 17))
                 .foregroundColor(TVTheme.textTertiary)
                 .padding(.horizontal, 28)
+                .padding(.vertical, 14)
+            Text("飞牛 fnOS：在「系统设置 → 文件共享协议 → WebDAV」里启用服务、设置「可见文件夹范围」，路径栏填那个文件夹名。HTTPS 端口 5006、HTTP 端口 5005；群晖 Cloud Sync 的 WebDAV 才是 6690。别把带端口的整串地址填进「服务器」栏 —— 下面「完整地址」显示的才是真正会保存的地址。")
+                .font(.system(size: 17))
+                .foregroundColor(TVTheme.textTertiary)
+                .padding(.horizontal, 28)
                 .padding(.bottom, 14)
         }
     }
 
     /// 拼出来的完整 WebDAV 地址（给用户确认）。
+    /// 直接复用 `composeWebDAVURL()`，保证预览与实际保存的完全一致。
     private var webdavURLPreview: String {
-        let host = webdavHost.isEmpty ? "服务器" : webdavHost
-        let port = webdavPortText.isEmpty ? "" : ":\(webdavPortText)"
-        var path = webdavPath
-        if path.isEmpty { path = "" } else if !path.hasPrefix("/") { path = "/" + path }
-        return "\(webdavScheme)://\(host)\(port)\(path)"
+        let composed = composeWebDAVURL()
+        return composed.isEmpty ? "（请填写服务器）" : composed
     }
 
     /// 由各分段拼出完整地址，写进设置。
+    ///
+    /// 允许「服务器」栏直接粘 `192.168.2.154:5006` 或 `https://192.168.2.154:5006/backup`
+    /// 这样的整串：自动拆出 host / port / path，不再拼出 `host:5006:6690` 这种
+    /// `URL(string:)` 解析为 nil 的非法地址。
     private func composeWebDAVURL() -> String {
-        let host = webdavHost.trimmingCharacters(in: .whitespacesAndNewlines)
+        var host = webdavHost.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !host.isEmpty else { return "" }
+        var scheme = webdavScheme
+        var port = webdavPortText.trimmingCharacters(in: .whitespacesAndNewlines)
         var path = webdavPath.trimmingCharacters(in: .whitespacesAndNewlines)
-        if path.isEmpty { path = "" } else if !path.hasPrefix("/") { path = "/" + path }
-        let port = webdavPortText.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if host.contains("://") {
+            if let parsed = URL(string: host) {
+                scheme = parsed.scheme?.lowercased() == "http" ? "http" : "https"
+                host = parsed.host ?? host
+                if let parsedPort = parsed.port { port = String(parsedPort) }
+                if !parsed.path.isEmpty, parsed.path != "/" { path = parsed.path }
+            }
+        } else if let colon = host.lastIndex(of: ":"),
+                  let parsedPort = Int(String(host[host.index(after: colon)...])),
+                  (1...65535).contains(parsedPort) {
+            port = String(parsedPort)
+            host = String(host[..<colon])
+        }
+        if path.isEmpty {
+            path = ""
+        } else if !path.hasPrefix("/") {
+            path = "/" + path
+        }
         let portPart = port.isEmpty ? "" : ":\(port)"
-        return "\(webdavScheme)://\(host)\(portPart)\(path)"
+        return "\(scheme)://\(host)\(portPart)\(path)"
     }
 
     /// 把完整地址拆回各分段（进入页面时用）。
     private func decomposeWebDAVURL(_ url: String) {
         guard let parsed = URL(string: url), let scheme = parsed.scheme else {
-            // 拆不动就整段塞进主机栏，用户自己改。
+            // 拆不动就整段塞进主机栏，由 compose 再自动识别。
             webdavScheme = "https"
             webdavHost = url
-            webdavPortText = "6690"
+            webdavPortText = "5006"
             webdavPath = ""
             return
         }
         webdavScheme = scheme == "http" ? "http" : "https"
         webdavHost = parsed.host ?? ""
-        webdavPortText = parsed.port.map(String.init) ?? (scheme == "http" ? "80" : "6690")
+        webdavPortText = parsed.port.map(String.init) ?? (scheme == "http" ? "5005" : "5006")
         var path = parsed.path
         if path == "/" { path = "" }
         webdavPath = path

@@ -391,24 +391,49 @@ final class Store: ObservableObject {
         // 先按当前配置重建后端，避免测的是旧配置。
         await reloadRemoteBackend()
         guard let backend = await makeRemoteBackend() else {
-            remoteStatus = "未配置远端存储"
+            remoteStatus = "未配置远端存储（服务器地址若是带端口的整串，请只填 IP）"
             remoteIsHealthy = false
             return remoteStatus
         }
         remote = backend
         do {
+            // ⚠️ 不能忽略 probe() 的返回值：旧实现 `_ = try await ...`，
+            // 导致 401 / 403 / 404 只要没抛错就一律显示「连接成功」。
+            var ok = true
             if let smb = backend as? SMBStore {
-                _ = try await smb.probe()
+                ok = try await smb.probe()
             } else if let webdav = backend as? WebDAVStore {
-                _ = try await webdav.probe()
+                ok = try await webdav.probe()
             }
-            remoteStatus = "连接成功"
-            remoteIsHealthy = true
+            if ok {
+                remoteStatus = "连接成功"
+                remoteIsHealthy = true
+            } else {
+                remoteStatus = "服务端拒绝了请求：检查地址/端口、账号密码、证书指纹与 WebDAV 可见文件夹范围"
+                remoteIsHealthy = false
+            }
         } catch {
-            remoteStatus = error.localizedDescription
+            remoteStatus = Self.describe(error)
             remoteIsHealthy = false
         }
         return remoteStatus
+    }
+
+    /// 把底层网络错误翻译成用户能直接动手修的提示。
+    private static func describe(_ error: Error) -> String {
+        let nsError = error as NSError
+        let text = error.localizedDescription
+        guard nsError.domain == NSURLErrorDomain else { return text }
+        // -1200 ~ -1206 是 TLS/证书相关错误（自签名、CN/SAN 不匹配等）。
+        if nsError.code <= -1200, nsError.code >= -1206 {
+            return "\(text)｜证书错误：自签名证书请在「证书指纹」里填服务器证书的 SHA-256 指纹。"
+        }
+        if nsError.code == NSURLErrorCannotConnectToHost
+            || nsError.code == NSURLErrorTimedOut
+            || nsError.code == NSURLErrorNetworkConnectionLost {
+            return "\(text)｜连不上主机：确认协议与端口配对（fnOS WebDAV HTTPS=5006、HTTP=5005）。"
+        }
+        return text
     }
 
     private func syncToRemote(_ backend: StorageBackend, state: PersistedState) async {

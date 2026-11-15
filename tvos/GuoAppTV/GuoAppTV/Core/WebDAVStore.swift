@@ -108,15 +108,30 @@ actor WebDAVStore: StorageBackend {
         }
     }
 
+    /// PROPFIND 必须带 XML 请求体：部分 WebDAV 服务端（含 fnOS）对空 body 的
+    /// PROPFIND 直接回 400，而不是 207 Multi-Status。
+    private static let propfindBody = """
+    <?xml version="1.0" encoding="utf-8"?>
+    <d:propfind xmlns:d="DAV:"><d:prop><d:resourcetype/><d:getcontentlength/></d:prop></d:propfind>
+    """
+
     /// 测试连接：PROPFIND 探测目录是否可读。
+    /// 非 2xx 一律抛出带状态码的错误，别悄悄返回 false —— 否则「测试连接」
+    /// 会把 401/403/404 当成成功。
     func probe() async throws -> Bool {
         var request = URLRequest(url: baseURL)
         request.httpMethod = "PROPFIND"
         request.setValue("0", forHTTPHeaderField: "Depth")
         request.setValue("application/xml", forHTTPHeaderField: "Content-Type")
+        request.httpBody = Data(Self.propfindBody.utf8)
         let (_, response) = try await send(request, authenticated: false)
-        guard let http = response as? HTTPURLResponse else { return false }
-        return (200..<300).contains(http.statusCode)
+        guard let http = response as? HTTPURLResponse else {
+            throw WebDAVError.invalidResponse
+        }
+        guard (200..<300).contains(http.statusCode) else {
+            throw WebDAVError.httpStatus(http.statusCode)
+        }
+        return true
     }
 
     // MARK: - 目录
@@ -134,16 +149,19 @@ actor WebDAVStore: StorageBackend {
 
     // MARK: - 请求与认证
 
-    /// 发请求并处理 401：先用 Basic，被拒再用 Digest 重试。
+    /// 发请求并处理 401：先用 Basic，只有服务端明确下发 Digest 参数时才重试。
+    ///
+    /// fnOS 只支持 Basic，且 401 时给的是 `Basic realm="Restricted"`。
+    /// 旧实现遇到任何 401 都重试一次，但 `applyDigestChallenge` 会因没有
+    /// Digest 参数直接返回，重试发的还是同一个 Basic 头 —— 白跑一趟，
+    /// 还把真正的 401 掩盖成「连接成功」。
     private func send(_ request: URLRequest, authenticated: Bool) async throws -> (Data, URLResponse) {
         var signed = request
         applyAuthorization(to: &signed)
         let (data, response) = try await session.data(for: signed)
-        if let http = response as? HTTPURLResponse, http.statusCode == 401, !authenticated {
-            // 服务端可能在 401 的 WWW-Authenticate 里给出 Digest 参数，解析后重试。
-            if let challenge = http.value(forHTTPHeaderField: "WWW-Authenticate") {
-                applyDigestChallenge(challenge)
-            }
+        if let http = response as? HTTPURLResponse, http.statusCode == 401, !authenticated,
+           let challenge = http.value(forHTTPHeaderField: "WWW-Authenticate"),
+           applyDigestChallenge(challenge, uri: request.url?.path ?? "/") {
             return try await send(request, authenticated: true)
         }
         return (data, response)
@@ -160,14 +178,18 @@ actor WebDAVStore: StorageBackend {
     }
 
     /// 解析 WWW-Authenticate 里的 Digest 参数。
-    private func applyDigestChallenge(_ challenge: String) {
-        guard challenge.lowercased().contains("digest") else { return }
+    /// - Returns: 拿到了可用的 nonce 才返回 true（表示值得重试一次）。
+    @discardableResult
+    private func applyDigestChallenge(_ challenge: String, uri: String) -> Bool {
+        guard challenge.lowercased().contains("digest") else { return false }
         let parameters = parseDigestParameters(challenge)
         digestState.nonce = parameters["nonce"] ?? ""
         digestState.realm = parameters["realm"] ?? ""
         digestState.qop = parameters["qop"] ?? ""
         digestState.opaque = parameters["opaque"]
-        digestState.uri = parameters["uri"] ?? ""
+        // Digest 的 uri 是本次请求的路径，WWW-Authenticate 里不会有这个字段。
+        digestState.uri = uri.isEmpty ? "/" : uri
+        return !digestState.nonce.isEmpty
     }
 
     /// 组装 Digest 响应头。

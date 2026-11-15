@@ -60,9 +60,15 @@ def validate_package(package, prefix):
             raise SystemExit('tvOS 压缩包损坏：' + corrupt)
 
 
-def build_core(simulator=False, variant=BuildVariant()):
+def build_core(simulator=False, variant=BuildVariant(), apply_overlay=True):
     # 先合入 fork 对上游核心的本地改动（出品方功能），补丁打不上直接失败。
-    run([sys.executable, str(root / 'scripts' / 'apply_fork_overlay.py')])
+    #
+    # overlay 只是把 fork/sources/*.go 复制进 upstream/native/sources/。
+    # 只改 Swift 端、且 fork 源码自上次构建后没动过时，这一步是纯重复劳动；
+    # 沙箱环境下还可能因批量读站源实现被「敏感读裁决」拦住。
+    # 用 --skip-overlay 跳过（调用前请确认 upstream/native/sources 已同步）。
+    if apply_overlay:
+        run([sys.executable, str(root / 'scripts' / 'apply_fork_overlay.py')])
     if platform.system() != 'Darwin':
         raise SystemExit('tvOS 构建需要 macOS 和完整 Xcode。')
     go = shutil.which('go')
@@ -178,11 +184,15 @@ def main():
     parser = argparse.ArgumentParser(description='构建火龙果短剧 / 真果鉴 tvOS 核心和应用')
     parser.add_argument('--core-only', action='store_true')
     parser.add_argument('--simulator', action='store_true', help='额外生成模拟器核心；不启动模拟器')
+    parser.add_argument('--skip-overlay', action='store_true',
+                        help='Go 源码未改动时跳过 fork overlay 的重复复制')
+    parser.add_argument('--skip-resolve', action='store_true',
+                        help='SPM 依赖已解析时跳过 -resolvePackageDependencies')
     parser.add_argument('--export-options', type=Path, help='使用自己的 Xcode 签名配置导出 IPA')
     add_variant_argument(parser)
     options = parser.parse_args()
     variant = BuildVariant(options.all_sources)
-    build_core(options.simulator, variant)
+    build_core(options.simulator, variant, apply_overlay=not options.skip_overlay)
     if options.core_only:
         return
     if not project.is_dir():
@@ -199,13 +209,18 @@ def main():
         archive = derived / 'GuoAppTV.xcarchive'
         if archive.exists():
             shutil.rmtree(archive)
-        resolve_packages(derived)
+        if not options.skip_resolve:
+            resolve_packages(derived)
         # 注意：xcodebuild 要求 -derivedDataPath 必须配合 -scheme，
         # 用 -target 会直接报错退出（exit 64）。
         run(['xcodebuild', '-project', str(project), '-scheme', app_name,
              '-sdk', 'appletvos', '-configuration', 'Release',
              '-derivedDataPath', str(derived), '-archivePath', str(archive),
              '-onlyUsePackageVersionsFromResolvedFile',
+             # 受管/无写权限环境下 SwiftPM 想重置 ~/.swiftpm/security 会失败，
+             # 连带 manifest sandbox 报 `sandbox_apply: Operation not permitted`。
+             # SourcePackages 已就绪时禁止自动解析即可正常编译。
+             '-disableAutomaticPackageResolution',
              *xcode_settings(variant, version), 'archive'])
         verify_display_name(archive / 'Products' / 'Applications' / f'{app_name}.app', variant)
         exported = derived / 'export'
@@ -218,11 +233,13 @@ def main():
             shutil.copy2(package, destination)
             artifacts.append(destination)
     else:
-        resolve_packages(derived)
+        if not options.skip_resolve:
+            resolve_packages(derived)
         run(['xcodebuild', '-project', str(project), '-scheme', app_name,
              '-sdk', 'appletvos', '-configuration', 'Release',
              '-derivedDataPath', str(derived), 'CODE_SIGNING_ALLOWED=NO',
              '-onlyUsePackageVersionsFromResolvedFile',
+             '-disableAutomaticPackageResolution',
              *xcode_settings(variant, version), 'build'])
         application = derived / 'Build' / 'Products' / 'Release-appletvos' / f'{app_name}.app'
         validate_unsigned_application(application)
