@@ -346,9 +346,9 @@ struct SettingsView: View {
             infoRow("核心", coreRevision)
             TVSettingDivider()
             // 只展示、不可操作：把作者账号也留在「关于」里，方便截图抄下来搜。
-            infoRow("B 站", AuthorSocial.name)
+            infoRow("B 站", AuthorSocial.bilibiliName)
             TVSettingDivider()
-            infoRow("微信公众号", AuthorSocial.name)
+            infoRow("微信公众号", AuthorSocial.wechatName)
             TVSettingDivider()
             note("原生 tvOS 应用 · Go 核心 · MPV 播放")
             note("在海报上按播放键直接播放；继续观看卡片长按可查看详情或移除")
