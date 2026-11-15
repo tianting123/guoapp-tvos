@@ -48,12 +48,22 @@ struct HeroInfoPanel: View {
     }
 
     private var badge: some View {
-        Text(isPreview ? "预览" : "热播")
-            .font(.system(size: TVTheme.TextSize.caption2, weight: .bold))
-            .foregroundColor(TVTheme.textPrimary)
-            .padding(.horizontal, 14)
-            .padding(.vertical, 6)
-            .background(Capsule().fill(isPreview ? TVTheme.surfaceBright : TVTheme.accent))
+        HStack(spacing: 16) {
+            Text(isPreview ? "预览" : "热播")
+                .font(.system(size: TVTheme.TextSize.caption2, weight: .bold))
+                .foregroundColor(TVTheme.textPrimary)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 6)
+                .background(Capsule().fill(isPreview ? TVTheme.surfaceBright : TVTheme.accent))
+            // 默认标签页是整屏 hero，放不下大卡片；账号压在这一行里，不增加信息栏高度。
+            Text(AuthorSocial.heroLine)
+                .font(.system(size: TVTheme.TextSize.caption2, weight: .semibold))
+                .foregroundColor(TVTheme.textPrimary.opacity(0.9))
+                .padding(.horizontal, 14)
+                .padding(.vertical, 6)
+                .background(Capsule().fill(TVTheme.surface))
+        }
+        .fixedSize()
     }
 
     private var metadata: String {

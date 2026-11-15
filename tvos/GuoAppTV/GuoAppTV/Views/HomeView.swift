@@ -78,6 +78,9 @@ struct HomeView: View {
 
     private var catalogSection: some View {
         VStack(alignment: .leading, spacing: 12) {
+            // 目录区最顶上的一条：进「剧场」第一屏就能看到两个平台账号。
+            AuthorStrip()
+                .padding(.bottom, 8)
             if appState.allSources {
                 sourceRow
             }

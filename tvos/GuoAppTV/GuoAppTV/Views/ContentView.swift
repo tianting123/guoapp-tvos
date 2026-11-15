@@ -57,6 +57,8 @@ struct ContentView: View {
                 }
             }
             .frame(height: 130)
+            // 冷启动每次都能看到：作者署名放在加载状态下方，不抢「重试」按钮的焦点。
+            AuthorBadge()
         }
         .padding(48)
     }

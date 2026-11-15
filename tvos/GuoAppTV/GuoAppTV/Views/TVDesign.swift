@@ -797,3 +797,121 @@ struct TVTextFieldRow: View {
         }
     }
 }
+
+// MARK: - 作者社交账号
+
+/// 作者的社交账号：B 站与微信公众号同名。
+///
+/// tvOS 上没有浏览器、也没有微信，外链点了也打不开，所以只做「从沙发上一眼看得清」的静态展示。
+/// 刻意不放可聚焦按钮：默认焦点必须留给剧集海报和播放按钮，别被署名抢走。
+enum AuthorSocial {
+    static let name = "芽芽打包酱"
+    static let bilibiliLabel = "B 站"
+    static let wechatLabel = "公众号"
+    static let bilibiliColor = Color(red: 251 / 255, green: 114 / 255, blue: 153 / 255)
+    static let wechatColor = Color(red: 7 / 255, green: 193 / 255, blue: 96 / 255)
+    /// 长文案里写全名：Swift 会把 ≤15 字节的短字符串内联进指令，打包产物里搜不到连续字节；
+    /// 留一句完整文案既方便在电视上读，也让 IPA 能直接核对署名。
+    static let searchHint = "B 站与微信公众号同名，搜「芽芽打包酱」即可找到"
+    static let heroLine = "B 站 / 公众号 · 芽芽打包酱"
+}
+
+/// 单个平台的一行：平台色胶囊 + 账号名。
+struct AuthorAccountRow: View {
+    let label: String
+    let color: Color
+
+    var body: some View {
+        HStack(spacing: 16) {
+            Text(label)
+                .font(.system(size: TVTheme.TextSize.caption2, weight: .bold))
+                .foregroundColor(.white)
+                .frame(width: 112, alignment: .center)
+                .padding(.vertical, 7)
+                .background(Capsule().fill(color))
+            Text(AuthorSocial.name)
+                .font(.system(size: TVTheme.TextSize.callout, weight: .semibold))
+                .foregroundColor(TVTheme.textPrimary)
+        }
+        .fixedSize()
+    }
+}
+
+/// 紧凑双行卡片：启动页、推荐页顶部常驻用。
+struct AuthorBadge: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("关注作者")
+                .font(.system(size: TVTheme.TextSize.caption2, weight: .semibold))
+                .foregroundColor(TVTheme.textTertiary)
+            AuthorAccountRow(label: AuthorSocial.bilibiliLabel, color: AuthorSocial.bilibiliColor)
+            AuthorAccountRow(label: AuthorSocial.wechatLabel, color: AuthorSocial.wechatColor)
+        }
+        .padding(.horizontal, 26)
+        .padding(.vertical, 18)
+        .background(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .fill(TVTheme.surface)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 20, style: .continuous)
+                        .strokeBorder(TVTheme.accent.opacity(0.45), lineWidth: 2)
+                )
+        )
+        .fixedSize()
+    }
+}
+
+/// 单行横条：剧场页目录顶部用，只占一行高度，不把海报往下推太多。
+struct AuthorStrip: View {
+    var body: some View {
+        HStack(spacing: 28) {
+            Text("关注作者")
+                .font(.system(size: TVTheme.TextSize.caption2, weight: .bold))
+                .foregroundColor(TVTheme.textSecondary)
+            AuthorAccountRow(label: AuthorSocial.bilibiliLabel, color: AuthorSocial.bilibiliColor)
+            AuthorAccountRow(label: AuthorSocial.wechatLabel, color: AuthorSocial.wechatColor)
+            Text(AuthorSocial.searchHint)
+                .font(.system(size: TVTheme.TextSize.caption2))
+                .foregroundColor(TVTheme.textTertiary)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 24)
+        .padding(.vertical, 14)
+        .background(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(TVTheme.surfaceDim)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .strokeBorder(TVTheme.accent.opacity(0.35), lineWidth: 2)
+                )
+        )
+    }
+}
+
+/// 宽版卡片：「我的」页顶部用，两个平台横排 + 搜索提示。
+struct AuthorCard: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("关注作者")
+                .font(.system(size: TVTheme.TextSize.caption, weight: .bold))
+                .foregroundColor(TVTheme.textSecondary)
+            HStack(spacing: 40) {
+                AuthorAccountRow(label: AuthorSocial.bilibiliLabel, color: AuthorSocial.bilibiliColor)
+                AuthorAccountRow(label: AuthorSocial.wechatLabel, color: AuthorSocial.wechatColor)
+            }
+            Text(AuthorSocial.searchHint)
+                .font(.system(size: TVTheme.TextSize.caption2))
+                .foregroundColor(TVTheme.textTertiary)
+        }
+        .padding(26)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .fill(TVTheme.surfaceDim)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 20, style: .continuous)
+                        .strokeBorder(TVTheme.accent.opacity(0.45), lineWidth: 2)
+                )
+        )
+    }
+}
