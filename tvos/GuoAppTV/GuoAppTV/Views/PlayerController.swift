@@ -107,6 +107,19 @@ final class PlayerController: NSObject, ObservableObject {
     /// 避免已离开的页面在后台起一个没人管、也没人销毁的 mpv 句柄。
     private var stopped = false
 
+    // MARK: - 黑屏自愈
+
+    /// 每次 startPlayback / destroyMpv 递增：延时检查只对当前这一次播放有效。
+    private var playbackGeneration = 0
+    /// 只让最后一次健康检查生效（起播、回前台、缓冲重试都会安排检查）。
+    private var healthCheckToken = 0
+    /// 还没拿到时长 / 还在缓冲时重排检查的次数，最多 3 轮（9 秒）。
+    private var healthCheckWaits = 0
+    /// 本次播放已尝试的画面恢复次数：1 = 重选视频轨 + 软解，2 = 重建句柄，3 = 放弃。
+    private var recoveryAttempts = 0
+    /// 下一次 startPlayback 用软解起播（MoltenVK 渲染上下文丢失时重建用）。
+    private var softwareDecodeForNextPlay = false
+
     /// 容器视图建好后由 PlayerHostView 调用；play() 若先到则在此补启动。
     func attach(to container: PlayerHostContainerView) {
         let newLayer = container.metalLayer
@@ -238,8 +251,16 @@ final class PlayerController: NSObject, ObservableObject {
 
     // MARK: - 播放启动
 
-    private func startPlayback(plan: PlaybackPlan, start: Double, danmakuEnabled: Bool, speed: Double = 1.0) {
+    private func startPlayback(plan: PlaybackPlan, start: Double, danmakuEnabled: Bool,
+                               speed: Double = 1.0, isRecovery: Bool = false) {
         destroyMpv()
+        playbackGeneration += 1
+        healthCheckWaits = 0
+        if !isRecovery {
+            // 新的一集 / 用户主动重试：恢复硬解与恢复预算；自愈重建时不清，避免无限重建。
+            recoveryAttempts = 0
+            softwareDecodeForNextPlay = false
+        }
         danmaku.configure(plan: plan, enabled: danmakuEnabled)
         guard let url = URL(string: plan.url) else {
             debugInfo = "播放地址无效"
@@ -273,7 +294,10 @@ final class PlayerController: NSObject, ObservableObject {
         _ = mpv_set_option_string(handle, "vo", "gpu-next")
         _ = mpv_set_option_string(handle, "gpu-api", "vulkan")
         _ = mpv_set_option_string(handle, "gpu-context", "moltenvk")
-        _ = mpv_set_option_string(handle, "hwdec", "videotoolbox")
+        // 默认硬解；黑屏自愈重建时改软解（videotoolbox 对某些编码会「时间在走但不出帧」）。
+        let softwareDecode = softwareDecodeForNextPlay
+        softwareDecodeForNextPlay = false
+        _ = mpv_set_option_string(handle, "hwdec", softwareDecode ? "no" : "videotoolbox")
         _ = mpv_set_option_string(handle, "subs-match-os-language", "yes")
         _ = mpv_set_option_string(handle, "subs-fallback", "yes")
         _ = mpv_set_option_string(handle, "video-rotate", "no")
@@ -332,9 +356,12 @@ final class PlayerController: NSObject, ObservableObject {
         isPaused = getFlag("pause")
         startProgressTimer()
         updateIdleTimer()
+        scheduleVideoHealthCheck()
     }
 
     private func destroyMpv() {
+        playbackGeneration += 1
+        healthCheckToken += 1
         progressTimer?.invalidate()
         progressTimer = nil
         // 播放器销毁时恢复系统空闲计时器，屏保才能正常出现。
@@ -379,6 +406,70 @@ final class PlayerController: NSObject, ObservableObject {
                 }
                 // STOP / QUIT / REDIRECT：忽略。
             }
+        }
+    }
+
+    // MARK: - 黑屏自愈
+
+    /// 起播 / 回前台 / 缓冲等待后，延时检查画面是否真的出来了。
+    /// generation + token 双重作废：换集、销毁、又安排了一次新检查时，旧检查直接退出。
+    private func scheduleVideoHealthCheck(delay: Double = 3.0) {
+        healthCheckToken += 1
+        let token = healthCheckToken
+        let generation = playbackGeneration
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            guard let self,
+                  self.healthCheckToken == token,
+                  self.playbackGeneration == generation,
+                  self.mpv != nil,
+                  !self.stopped
+            else { return }
+            self.checkVideoOutput()
+        }
+    }
+
+    /// 判据只用代码里已验证可靠的 `video-params/w`：时间在走、时长已拿到、
+    /// 没暂停也没在缓冲，但视频参数为空 —— 就是「黑屏但有弹幕」。
+    private func checkVideoOutput() {
+        let position = getDouble("time-pos")
+        let duration = getDouble("duration")
+        if duration <= 0 || position <= 0 || getFlag("paused-for-cache") {
+            // 网络慢时不算黑屏：最多再等 3 轮（9 秒）。
+            if healthCheckWaits < 3 {
+                healthCheckWaits += 1
+                scheduleVideoHealthCheck()
+            }
+            return
+        }
+        healthCheckWaits = 0
+        if getInt64("video-params/w") > 0 {
+            // 画面正常：把恢复预算还回去，之后再黑还能救。
+            recoveryAttempts = 0
+            return
+        }
+        recoverVideoOutput()
+    }
+
+    private func recoverVideoOutput() {
+        guard let handle = mpv, let plan = activePlan, !stopped else { return }
+        recoveryAttempts += 1
+        switch recoveryAttempts {
+        case 1:
+            // 轻恢复：用 property 重选视频轨并关掉硬解，不打断播放、不重新缓冲。
+            // 旧代码错在用 set_option_string，这里必须是 set_property_string。
+            _ = mpv_set_property_string(handle, "vid", "auto")
+            _ = mpv_set_property_string(handle, "hwdec", "no")
+            debugInfo = "画面恢复 1/2：重选视频轨并切软解"
+            scheduleVideoHealthCheck()
+        case 2:
+            // MoltenVK 上下文可能已丢：重建句柄，从当前位置续播，这次直接软解起播。
+            softwareDecodeForNextPlay = true
+            startPlayback(plan: plan, start: progress.position,
+                          danmakuEnabled: activeDanmakuEnabled, isRecovery: true)
+        default:
+            // 两次都救不回来就停手，别无限重建；诊断面板里给出可行动提示。
+            debugInfo = "画面恢复失败：请按重试或换一条线路"
         }
     }
 
@@ -436,6 +527,7 @@ final class PlayerController: NSObject, ObservableObject {
         let state = paused ? "已暂停" : (buffering ? "缓冲中" : "播放中")
         lines.append("状态: \(state)")
         lines.append("视频: \(getString("video-codec").orDash) 硬解: \(getString("hwdec-current").orDash)")
+        lines.append("画面: \(getInt64("video-params/w"))×\(getInt64("video-params/h")) 自愈: \(recoveryAttempts) 次")
         lines.append("音频: \(getString("audio-codec").orDash)")
         lines.append("进度: \(Int(position ?? progress.position)) / \(Int(duration ?? progress.duration)) 秒")
         lines.append("解密: \(hasDecryptionKey ? "有" : "无")")
@@ -466,22 +558,29 @@ final class PlayerController: NSObject, ObservableObject {
         })
     }
 
-    /// 切后台时暂停并停掉视频输出；切回前台时恢复输出并续播（防回前台黑屏）。
+    /// 切后台时只暂停，切回前台恢复播放。
+    ///
+    /// 这里以前用 `mpv_set_option_string(handle, "vid", "no")` 停视频输出、回前台再设
+    /// `"vid", "auto"`。那是**黑屏但有弹幕**的元凶：`vid` 在运行中的实例上是 property，
+    /// 用 option 写不会立刻生效，反而残留成「下一次 loadfile 的初始值」；换集、换剧或
+    /// 前后台通知没成对时，`vid=no` 就一直留着 —— mpv 照常走时间、出声、发进度，
+    /// 弹幕浮层照常滚动，唯独不选视频轨，Metal 层只剩黑底。
+    /// tvOS 进后台本来就会挂起渲染，不需要手动切视频轨。
     private func enterBackground() {
-        guard let handle = mpv else { return }
+        guard mpv != nil else { return }
         wasPlayingBeforeBackground = !getFlag("pause")
         setFlag("pause", true)
         UIApplication.shared.isIdleTimerDisabled = false
-        _ = mpv_set_option_string(handle, "vid", "no")
     }
 
     private func enterForeground() {
-        guard let handle = mpv else { return }
-        _ = mpv_set_option_string(handle, "vid", "auto")
+        guard mpv != nil else { return }
         if wasPlayingBeforeBackground {
             setFlag("pause", false)
         }
         updateIdleTimer()
+        // 回前台是 MoltenVK 上下文最容易丢的时机：延时复查一次，黑了就自愈。
+        scheduleVideoHealthCheck(delay: 2.0)
     }
 
     // MARK: - mpv 属性读写

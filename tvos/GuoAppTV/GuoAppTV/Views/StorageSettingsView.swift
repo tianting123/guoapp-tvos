@@ -169,7 +169,7 @@ struct StorageSettingsView: View {
                 .foregroundColor(TVTheme.textTertiary)
                 .padding(.horizontal, 28)
                 .padding(.vertical, 14)
-            Text("自签名证书（如 fnOS、群晖自签）在用 IP 直连时，系统会报「证书无效 / 可能伪装成 …」。把服务器的 SHA-256 指纹填这里，程序就只信任这一张证书 —— 比「跳过全部校验」安全，伪造的证书仍会被拒绝。公共 CA 签发的证书留空即可。")
+            Text("不想处理证书：把上面「协议」切到 HTTP、端口填 5005（fnOS 的明文 WebDAV），就没有 TLS 握手、也就没有证书校验这一步；代价是账号密码在内网明文传输。坚持用 HTTPS 就填服务器证书的 SHA-256 指纹，程序只信任这一张，伪造证书仍会被拒绝。本应用不提供「跳过证书校验」开关。")
                 .font(.system(size: 17))
                 .foregroundColor(TVTheme.textTertiary)
                 .padding(.horizontal, 28)

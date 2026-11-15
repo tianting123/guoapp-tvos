@@ -509,7 +509,7 @@ A10000000000000000000037 /* StorageSettingsView.swift */,
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 2.57;
+				MARKETING_VERSION = 2.58;
 				ONLY_ACTIVE_ARCH = YES;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
@@ -550,7 +550,7 @@ A10000000000000000000037 /* StorageSettingsView.swift */,
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 2.57;
+				MARKETING_VERSION = 2.58;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-Wl,-u,_DuanjuRequest",
