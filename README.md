@@ -9,6 +9,9 @@
 > **克隆方式**：`git clone --recursive` —— `upstream/` 是 Go 核心子模块，
 > `fork/` 是本仓对核心的本地改动，构建脚本会把 `fork/` 覆盖到 `upstream/` 再编译。
 > **仓库地址**：<https://github.com/yaya918/guoapp-tvos>
+> **Fork 自**：<https://github.com/lukaschan/guoapp-tvos>（本仓由该仓库 fork 而来，
+> 保留了完整提交历史；改了什么见下文
+> [「Fork 了哪些上游项目，解决了什么问题」](#fork-了哪些上游项目解决了什么问题)）
 
 > 与上游的关系：本仓是独立仓库，是上游 [Xanerix/guoapp](https://github.com/Xanerix/guoapp)
 > 的 tvOS 版（独立 SwiftUI 应用），与主仓库只共享 Go 核心与 `DuanjuRequest` JSON 协议；
@@ -62,6 +65,21 @@
 
 本仓不是凭空写的应用，而是**基于上游的 Go 核心与协议，重新实现了一层 tvOS 界面**。
 下面按「继承了什么 / 改了什么 / 解决什么问题」逐条说明。
+
+### 0. `lukaschan/guoapp-tvos` —— 本仓的 fork 来源
+
+| | |
+| --- | --- |
+| **仓库** | [lukaschan/guoapp-tvos](https://github.com/lukaschan/guoapp-tvos) |
+| **继承方式** | 本仓由该仓库 fork 而来，**保留完整提交历史**；GitHub 上可从本仓反向追溯到它 |
+| **拿到的** | tvOS 工程的骨架与最初的构建脚本、GitHub Actions 发布流程、本仓全部既有提交 |
+
+**改了什么**：在其基础上继续维护 tvOS 应用 —— 修播放黑屏、接站源开关与 WebDAV/SMB 远端存储、
+更正作者署名、把打包脚本漏传的 Go build tag 补上，并整体迁移到本账号公开发布。
+
+> 注意区分两层「上游」：
+> - `lukaschan/guoapp-tvos` —— **本仓的直接 fork 来源**（同一套 tvOS 代码的历史）。
+> - `Xanerix/guoapp` —— **Go 核心与协议的上游**，以 `upstream/` submodule 的形式继承（见下）。
 
 ### 1. `Xanerix/guoapp` —— 上游 Go 核心（以 submodule 继承，不改上游仓库）
 
@@ -181,10 +199,12 @@ Caches。**系统在存储不足时可能清理 Caches**，追剧与进度可能
 需要 macOS + 完整 Xcode。首次克隆须带子模块（否则 `upstream/` 为空，构建会失败）：
 
 ```sh
-git clone --recurse-submodules https://github.com/lukaschan/guoapp-tvos.git
+git clone --recurse-submodules https://github.com/yaya918/guoapp-tvos.git
 # 已克隆过的仓库：git submodule update --init --recursive
 python3 scripts/build_tvos.py [--all-sources]
 ```
+
+> 想从原始 fork 源开始改，也可以克隆 <https://github.com/lukaschan/guoapp-tvos>（本仓由它 fork 而来）。
 
 - 默认构建火龙果短剧；`--all-sources` 构建真果鉴。
 - 产物在 `dist/tvos/`，为**未签名** IPA，需在 Mac 上用 Xcode 签名后安装到 Apple TV。
