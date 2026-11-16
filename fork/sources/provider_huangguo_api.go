@@ -2,7 +2,7 @@ package sources
 
 import (
 	"context"
-	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,7 +18,23 @@ import (
 const huangguoAISearchPageSize = 20
 
 func (p *huangguoAIProvider) huangguoAIAPI(ctx context.Context, path string, out any) error {
-	envelope, err := json.Marshal(map[string]string{"method": http.MethodGet, "path": path, "body": "", "content_type": ""})
+	return p.huangguoAIEdge(ctx, http.MethodGet, path, nil, out)
+}
+
+// 走边缘网关的请求：method / path / body / content_type 组成一个信封。
+// body 是 base64 编码的 JSON（GET 时为空），content_type 相应给 "application/json"。
+func (p *huangguoAIProvider) huangguoAIEdge(ctx context.Context, method, path string, payload any, out any) error {
+	payloadBody := ""
+	contentType := ""
+	if payload != nil {
+		raw, err := json.Marshal(payload)
+		if err != nil {
+			return err
+		}
+		payloadBody = base64.StdEncoding.EncodeToString(raw)
+		contentType = "application/json"
+	}
+	envelope, err := json.Marshal(map[string]string{"method": method, "path": path, "body": payloadBody, "content_type": contentType})
 	if err != nil {
 		return err
 	}
@@ -86,18 +102,41 @@ func huangguoAIChapter(base, sourceID string, episode int, title string) core.Ch
 		Title: core.FirstNonEmpty(title, fmt.Sprintf("第%d集", episode)), PageURL: pageURL, CurrentEpisode: core.RawEpisode(episode)}
 }
 
+// 播放地址的响应：旧接口给 video_url，新接口给 streams.main / streams.hevc。
+type huangguoAIPlayReply struct {
+	VideoURL string `json:"video_url"`
+	Streams  struct {
+		Main string `json:"main"`
+		HEVC string `json:"hevc"`
+	} `json:"streams"`
+}
+
+func (reply huangguoAIPlayReply) mediaURL() string {
+	return core.FirstNonEmpty(reply.VideoURL, reply.Streams.Main, reply.Streams.HEVC)
+}
+
 func (p *huangguoAIProvider) fetchHuangguoAIPlayURL(ctx context.Context, sourceID string, episode int) (string, error) {
 	if !rankingSourceID.MatchString(sourceID) || episode < 1 {
 		return "", errors.New("黄果集数无效")
 	}
-	var play struct {
-		VideoURL string `json:"video_url"`
+	// 新播放接口：POST /api/videos/{id}/episodes/{ep}/playback，地址在 streams 里。
+	// 旧 /play 接口已不再返回地址（status 1 但 video_url 为空），仅作兜底。
+	var playback huangguoAIPlayReply
+	path := fmt.Sprintf("/api/videos/%s/episodes/%d/playback", url.PathEscape(sourceID), episode)
+	if err := p.huangguoAIEdge(ctx, http.MethodPost, path, map[string]any{}, &playback); err == nil {
+		if media := playback.mediaURL(); media != "" {
+			return core.NormalizeProviderMediaURL(p.site()+"/", media), nil
+		}
 	}
-	path := fmt.Sprintf("/api/videos/%s/play?ep=%d&page_texts=0", url.PathEscape(sourceID), episode)
-	if err := p.huangguoAIAPI(ctx, path, &play); err != nil {
+	var legacy huangguoAIPlayReply
+	legacyPath := fmt.Sprintf("/api/videos/%s/play?ep=%d&page_texts=0", url.PathEscape(sourceID), episode)
+	if err := p.huangguoAIAPI(ctx, legacyPath, &legacy); err != nil {
 		return "", err
 	}
-	return core.NormalizeProviderMediaURL(p.site()+"/", play.VideoURL), nil
+	if media := legacy.mediaURL(); media != "" {
+		return core.NormalizeProviderMediaURL(p.site()+"/", media), nil
+	}
+	return "", errors.New("黄果未返回有效播放地址")
 }
 
 func (p *huangguoAIProvider) searchHuangguoAI(ctx context.Context, page int, query string) ([]core.Drama, bool, error) {
@@ -164,7 +203,7 @@ func (p *huangguoAIProvider) site() string {
 }
 
 func (p *huangguoAIProvider) URLCandidates(rawURL string) []string {
-	return providerURLCandidates(rawURL)
+	return p.providerURLCandidates(rawURL)
 }
 
 var huangguoAIDescriptor = core.SourceDescriptor{
@@ -176,7 +215,7 @@ var huangguoAIDescriptor = core.SourceDescriptor{
 	EntryName:   "AI",
 	DefaultOff:  true,
 	Aliases:     []string{"huangguo", "huangguoai.com"},
-	MatchesHost: func(host string) bool { return host == "huangguoai.com" || isHuangguoAIMirrorHost(host) },
+	MatchesHost: func(host string) bool { return isHuangguoAIBaseHost(host) || isHuangguoAIMirrorHost(host) },
 	BaseURL:     huangguoAIBaseURL,
 	ValidCategory: func(category string) bool {
 		for _, entry := range nativeAICategories {
@@ -253,8 +292,6 @@ func (p *huangguoAIProvider) RankingPage(ctx context.Context, board core.Ranking
 var nativeAICategories = []core.Category{
 	{ID: "ai-duanju", Name: "AI 短剧"},
 	{ID: "ai-manju", Name: "AI 漫剧"},
-	{ID: "ai-huanlian", Name: "AI 换脸"},
-	{ID: "ai-mogai", Name: "AI 魔改"},
 }
 
 func (p *huangguoAIProvider) fetchHuangguoAICatalogPage(ctx context.Context, page int, category string) ([]core.Drama, bool, error) {
@@ -312,13 +349,21 @@ func (p *huangguoAIProvider) fetchHuangguoAICatalogPage(ctx context.Context, pag
 
 var huangguoAIBaseURL = "https://huangguoai.com"
 
-var huangguoAIBaseMirrors = []string{"https://huangguoai.com", "https://thu.lbvrhyir.cc", "https://pku.xxbgwypx.cc", "https://ttvoij.ediayikma.cc", "https://thu.ediayikma.cc", "https://pku.ediayikma.cc", "https://fdu.ediayikma.cc", "https://thu.agdkczeyx.cc"}
+var huangguoAIBaseMirrors = []string{"https://huangguoai.com", "https://huangguoai.ai", "https://thu.ixgukkejj.cc", "https://pku.ixgukkejj.cc", "https://fdu.ixgukkejj.cc", "https://thu.bmikbxhi.cc", "https://pku.bmikbxhi.cc", "https://fdu.bmikbxhi.cc"}
 
-var huangguoAIMirrorDomains = []string{"lbvrhyir.cc", "xxbgwypx.cc", "ediayikma.cc", "agdkczeyx.cc"}
+var huangguoAIMirrorDomains = []string{"ixgukkejj.cc", "bmikbxhi.cc"}
 
-func providerURLCandidates(rawURL string) []string {
+// 官方发布页里的子域名前缀（thu = 清华，pku = 北大，fdu = 复旦，sjtu / zju / nju / xmu / sysu 是高校）。
+var huangguoAISubdomains = []string{"thu", "pku", "fdu", "sjtu", "zju", "nju", "xmu", "sysu"}
+
+// 黄果 AI 的主域名（官方换过 .com → .ai）。
+func isHuangguoAIBaseHost(host string) bool {
+	return host == "huangguoai.com" || host == "huangguoai.ai"
+}
+
+func (p *huangguoAIProvider) providerURLCandidates(rawURL string) []string {
 	u, err := url.Parse(rawURL)
-	if err != nil || u.Hostname() != "huangguoai.com" {
+	if err != nil || !isHuangguoAIBaseHost(u.Hostname()) {
 		return []string{rawURL}
 	}
 	out := make([]string, 0, len(huangguoAIBaseMirrors)+8)
@@ -332,10 +377,15 @@ func providerURLCandidates(rawURL string) []string {
 	}
 	for i, mirror := range huangguoAIBaseMirrors {
 		if i == 1 {
-			for _, generated := range generatedHuangguoAIMirrors(rawURL, 8) {
+			for _, generated := range generatedHuangguoAIMirrors(8) {
 				add(core.RehostProviderURL(u, generated))
 			}
 		}
+		add(core.RehostProviderURL(u, mirror))
+	}
+	// 静态域名池过期时靠发布页动态发现自愈：结果只追加候选，不替换主线路，
+	// 拉不到时行为与原来一致。发现是后台预取，这里不等待它。
+	for _, mirror := range p.huangguoDiscoveredMirrors() {
 		add(core.RehostProviderURL(u, mirror))
 	}
 	if len(out) == 0 {
@@ -344,27 +394,20 @@ func providerURLCandidates(rawURL string) []string {
 	return out
 }
 
-func generatedHuangguoAIMirrors(seed string, n int) []string {
-	if n <= 0 {
+// 与官方发布页一致的组合方式：子域名 × 根域名轮转，先覆盖每个根域名。
+func generatedHuangguoAIMirrors(n int) []string {
+	if n <= 0 || len(huangguoAIMirrorDomains) == 0 || len(huangguoAISubdomains) == 0 {
 		return nil
 	}
 	out := make([]string, 0, n)
 	seen := map[string]bool{}
-	for i := 0; len(out) < n && i < n*4; i++ {
-		sum := sha256.Sum256([]byte(fmt.Sprintf("%s:%d", seed, i)))
-		hexText := fmt.Sprintf("%x", sum[:])
-		sub := strings.TrimLeft(hexText[:6], "0123456789")
-		if len(sub) < 4 {
-			sub = hexText[6:12]
-		}
-		if len(sub) > 6 {
-			sub = sub[:6]
-		}
-		if len(sub) < 3 || seen[sub] {
+	for i := 0; len(out) < n && i < len(huangguoAISubdomains)*len(huangguoAIMirrorDomains); i++ {
+		host := huangguoAISubdomains[i/len(huangguoAIMirrorDomains)] + "." + huangguoAIMirrorDomains[i%len(huangguoAIMirrorDomains)]
+		if seen[host] {
 			continue
 		}
-		seen[sub] = true
-		out = append(out, "https://"+sub+"."+huangguoAIMirrorDomains[len(out)%len(huangguoAIMirrorDomains)])
+		seen[host] = true
+		out = append(out, "https://"+host)
 	}
 	return out
 }
@@ -456,5 +499,6 @@ func isHuangguoAIMirrorHost(host string) bool {
 			return true
 		}
 	}
-	return false
+	// 发布页动态发现的镜像也认（静态池过期时靠它兜底）。
+	return huangguoDiscoveredHost(host)
 }
