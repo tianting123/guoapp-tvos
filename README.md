@@ -8,6 +8,7 @@
 > **可安装包**：见 [`Releases/`](Releases/README.md)，里面是未签名 tvOS IPA，需自签后侧载。
 > **克隆方式**：`git clone --recursive` —— `upstream/` 是 Go 核心子模块，
 > `fork/` 是本仓对核心的本地改动，构建脚本会把 `fork/` 覆盖到 `upstream/` 再编译。
+> **仓库地址**：<https://github.com/yaya918/guoapp-tvos>
 
 > 与上游的关系：本仓是独立仓库，是上游 [Xanerix/guoapp](https://github.com/Xanerix/guoapp)
 > 的 tvOS 版（独立 SwiftUI 应用），与主仓库只共享 Go 核心与 `DuanjuRequest` JSON 协议；

@@ -29,7 +29,7 @@ python3 scripts/build_tvos.py --skip-overlay --skip-resolve
 ## 从源码构建
 
 ```bash
-git clone --recursive <本仓库地址>
+git clone --recursive https://github.com/yaya918/guoapp-tvos.git
 cd guoapp-tvos
 ```
 
