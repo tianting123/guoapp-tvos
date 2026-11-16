@@ -9,8 +9,8 @@
 > **克隆方式**：`git clone --recursive` —— `upstream/` 是 Go 核心子模块，
 > `fork/` 是本仓对核心的本地改动，构建脚本会把 `fork/` 覆盖到 `upstream/` 再编译。
 > **仓库地址**：<https://github.com/yaya918/guoapp-tvos>
-> **Fork 自**：<https://github.com/lukaschan/guoapp-tvos>（本仓由该仓库 fork 而来，
-> 保留了完整提交历史；改了什么见下文
+> **Fork 自**：<https://github.com/lukaschan/guoapp-tvos>（本仓与该仓库**同源分叉** ——
+> 双方同源，各自独立发展；本仓的提交历史完整保留，改了什么见下文
 > [「Fork 了哪些上游项目，解决了什么问题」](#fork-了哪些上游项目解决了什么问题)）
 
 > 与上游的关系：本仓是独立仓库，是上游 [Xanerix/guoapp](https://github.com/Xanerix/guoapp)
@@ -66,19 +66,19 @@
 本仓不是凭空写的应用，而是**基于上游的 Go 核心与协议，重新实现了一层 tvOS 界面**。
 下面按「继承了什么 / 改了什么 / 解决什么问题」逐条说明。
 
-### 0. `lukaschan/guoapp-tvos` —— 本仓的 fork 来源
+### 0. `lukaschan/guoapp-tvos` —— 同源的本仓前身
 
 | | |
 | --- | --- |
 | **仓库** | [lukaschan/guoapp-tvos](https://github.com/lukaschan/guoapp-tvos) |
-| **继承方式** | 本仓由该仓库 fork 而来，**保留完整提交历史**；GitHub 上可从本仓反向追溯到它 |
+| **关系** | 与本仓**同源分叉**（2026-11-14 前后分开，各自独立发展；本仓的提交历史完整保留） |
 | **拿到的** | tvOS 工程的骨架与最初的构建脚本、GitHub Actions 发布流程、本仓全部既有提交 |
 
 **改了什么**：在其基础上继续维护 tvOS 应用 —— 修播放黑屏、接站源开关与 WebDAV/SMB 远端存储、
 更正作者署名、把打包脚本漏传的 Go build tag 补上，并整体迁移到本账号公开发布。
 
 > 注意区分两层「上游」：
-> - `lukaschan/guoapp-tvos` —— **本仓的直接 fork 来源**（同一套 tvOS 代码的历史）。
+> - `lukaschan/guoapp-tvos` —— **同源的本仓前身**（同一套 tvOS 代码的历史）。
 > - `Xanerix/guoapp` —— **Go 核心与协议的上游**，以 `upstream/` submodule 的形式继承（见下）。
 
 ### 1. `Xanerix/guoapp` —— 上游 Go 核心（以 submodule 继承，不改上游仓库）
