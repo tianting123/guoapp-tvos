@@ -347,6 +347,8 @@ func hongguoSign551Headers(query, stubHex string, stamp int64) map[string]string
 		aid, _ = strconv.ParseInt(raw, 10, 64)
 	}
 	deviceID := hongguoQueryParam(query, "device_id")
+	// 官方实现这里传的是空串（x-argus 的 bean 字段 16）；实测传 iid 同样能过，
+	// 这里保持传 iid（与 query 里的 iid 一致，便于排查时对照）。
 	installID := hongguoQueryParam(query, "iid")
 	randField, err := cryptoRandomInt()
 	if err != nil {
