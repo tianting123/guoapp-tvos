@@ -89,12 +89,16 @@ final class PlayerController: NSObject, ObservableObject {
     private var mpv: OpaquePointer?
     private var wakeupContext: UnsafeMutablePointer<MpvWakeupContext>?
     private var metalLayer: CAMetalLayer?
+    /// 当前句柄绑定的图层；与 metalLayer 不是同一个时句柄不可复用（须重建指向新层）。
+    private var handleLayer: CAMetalLayer?
     private var currentURL: URL?
     private var hasDecryptionKey = false
     /// 最近一次 mpv END_FILE 错误原文（失败页展示用，便于定位起播失败原因）。
     private(set) var lastError = ""
     private var activePlan: PlaybackPlan?
     private var activeDanmakuEnabled = true
+    /// 本次播放的倍速：视图重建（切到全屏）续播时沿用，不能掉回 1.0。
+    private var activeSpeed: Double = 1.0
     private var pendingPlay: (plan: PlaybackPlan, start: Double, danmakuEnabled: Bool, speed: Double)?
     private let overlay = DanmakuOverlayView()
     private let danmaku = DanmakuEngine()
@@ -139,7 +143,8 @@ final class PlayerController: NSObject, ObservableObject {
         installBackgroundObservers()
         if layerChanged, let activePlan {
             // 视图重建导致 Metal 层换了：mpv 需重建并指向新层，从当前位置续播。
-            startPlayback(plan: activePlan, start: progress.position, danmakuEnabled: activeDanmakuEnabled)
+            startPlayback(plan: activePlan, start: progress.position,
+                          danmakuEnabled: activeDanmakuEnabled, speed: activeSpeed)
             return
         }
         if let pending = pendingPlay {
@@ -208,10 +213,23 @@ final class PlayerController: NSObject, ObservableObject {
         if size != videoSize { videoSize = size }
     }
 
-    /// 手动选集时先停掉当前句柄：旧集不再上报进度（否则会记到新集名下），
-    /// 新集地址解析好后照常 play()。不动后台观察者与弹幕浮层。
+    /// 手动选集时卸下当前文件但保留句柄：旧集立刻停（不再上报进度、不会触发播完），
+    /// 新集地址解析好后 play() 复用句柄直接 loadfile，省掉销毁重建。
+    /// 与 stop() 的区别：stop() 连句柄一起销毁（退出播放时用）。
+    ///
+    /// 为什么保留句柄：mpv_initialize 连带 gpu-next / 硬解 / 音频初始化，是切集卡顿的大头；
+    /// 复用句柄后切集只做「更新逐集选项 + loadfile」。
+    /// 兜底：若复用后新集起不来（解密密钥没随 loadfile 生效等），黑屏自愈的第 2 档会重建句柄。
     func halt() {
-        destroyMpv()
+        if mpv != nil {
+            // stop 会产生 END_FILE(STOP) 事件，事件泵里按 STOP 忽略，不会误判为播完。
+            command(["stop"])
+        }
+        // 进度计时器要停：否则旧集的进度会继续上报，记到新集名下。
+        progressTimer?.invalidate()
+        progressTimer = nil
+        // 恢复系统空闲计时器，屏保才能正常出现（出错页不该让屏一直亮着）。
+        UIApplication.shared.isIdleTimerDisabled = false
         activePlan = nil
         pendingPlay = nil
         progress = PlaybackProgress(position: 0, duration: 0)
@@ -219,6 +237,13 @@ final class PlayerController: NSObject, ObservableObject {
         videoSize = nil
         danmaku.reset()
         overlay.clear()
+    }
+
+    /// 出错时停掉句柄：句柄此时状态不可信，直接销毁，重试时照常 load() → play()。
+    /// 与 halt() 的区别：halt 只卸下文件、保留句柄（换集用），这里连句柄一起销毁。
+    func haltAndDestroy() {
+        halt()
+        destroyMpv()
     }
 
     /// 正在播放时禁止系统空闲计时器，避免 tvOS 屏保在看剧时弹出；
@@ -249,10 +274,24 @@ final class PlayerController: NSObject, ObservableObject {
         command(["seek", "0", "relative+exact"])
     }
 
+    /// 播放中开关弹幕（全屏播放控件的「弹幕」按钮），不重建播放器。画面重建后的续播、还在等的起播都沿用；
+    /// 换集与重试由 PlaybackSession 照设置里的同一开关（danmakuEnabled）传进 play()。
+    func setDanmakuEnabled(_ enabled: Bool) {
+        activeDanmakuEnabled = enabled
+        pendingPlay?.danmakuEnabled = enabled
+        danmaku.setEnabled(enabled)
+    }
+
     // MARK: - 播放启动
 
     private func startPlayback(plan: PlaybackPlan, start: Double, danmakuEnabled: Bool,
                                speed: Double = 1.0, isRecovery: Bool = false) {
+        // 自愈重建（isRecovery）必须新建句柄：MoltenVK 渲染上下文可能已丢，旧句柄不可信。
+        // 其余情况若句柄还在、且它绑的图层没换，就复用句柄换集（见 reuseHandle）。
+        if !isRecovery, let handle = mpv, handleLayer === metalLayer {
+            reuseHandle(handle, plan: plan, start: start, danmakuEnabled: danmakuEnabled, speed: speed)
+            return
+        }
         destroyMpv()
         playbackGeneration += 1
         healthCheckWaits = 0
@@ -277,6 +316,7 @@ final class PlayerController: NSObject, ObservableObject {
         lastError = ""
         activePlan = plan
         activeDanmakuEnabled = danmakuEnabled
+        activeSpeed = speed
         progress = PlaybackProgress(position: 0, duration: 0)
         videoSize = nil
         debugInfo = "正在加载…"
@@ -287,6 +327,8 @@ final class PlayerController: NSObject, ObservableObject {
             return
         }
         mpv = handle
+        // 句柄绑的图层记下来：图层换了（视图重建）句柄就不能复用，必须重建指向新层。
+        handleLayer = layer
         // wid 是 int64，内容为 CAMetalLayer 的对象地址（mpv 不持有引用；
         // 本控制器的 metalLayer 强引用该图层，句柄销毁前图层一直有效）。
         var wid = Int64(Int(bitPattern: Unmanaged.passUnretained(layer).toOpaque()))
@@ -304,23 +346,7 @@ final class PlayerController: NSObject, ObservableObject {
         if start > 0 {
             _ = mpv_set_option_string(handle, "start", "\(start)")
         }
-        // 与 iOS 端 player_screen.dart 一致的 demuxer 选项：重试、实验特性、
-        // 扩展名、协议白名单（local 与否的分支与 iOS 相同）、解密密钥。
-        // 注意：不要用 mpv 自身的 decryption-key 选项——在此构建下它不生效
-        // （时长能读出但时间一直停在 0、无画面无声）。iOS 端用的是下面
-        // demuxer-lavf-o 这一路，把密钥作为 FFmpeg demuxer 选项直接传给 libavformat。
-        var lavfOptions = [
-            "seg_max_retry=3",
-            "strict=experimental",
-            "allowed_extensions=ALL",
-            plan.local
-                ? "protocol_whitelist=[file,crypto,data]"
-                : "protocol_whitelist=[http,https,tcp,tls,crypto,data,file]",
-        ]
-        if hasDecryptionKey {
-            lavfOptions.append("decryption_key=\(plan.decryptionKey)")
-        }
-        _ = mpv_set_option_string(handle, "demuxer-lavf-o", lavfOptions.joined(separator: ","))
+        _ = mpv_set_option_string(handle, "demuxer-lavf-o", lavfOptions(for: plan).joined(separator: ","))
         _ = mpv_set_option_string(handle, "network-timeout", "20")
         // 播放倍速：来自设置里的播放倍速，打开剧集时生效。
         if speed != 1.0 {
@@ -359,11 +385,88 @@ final class PlayerController: NSObject, ObservableObject {
         scheduleVideoHealthCheck()
     }
 
+    /// 复用已有句柄换集：只更新逐集选项再 loadfile，跳过销毁与重新初始化
+    /// （mpv_initialize 连带 gpu-next / 硬解 / 音频初始化，是切集卡顿的大头）。
+    ///
+    /// 兜底：若复用后新集起不来（解密密钥没随 loadfile 生效等），
+    /// 黑屏自愈的第 2 档会重建句柄从当前位置续播（见 recoverVideoOutput）。
+    private func reuseHandle(_ handle: OpaquePointer, plan: PlaybackPlan, start: Double,
+                             danmakuEnabled: Bool, speed: Double) {
+        // 让上一轮的健康检查作废（它只对当前这一次播放有效）。
+        playbackGeneration += 1
+        healthCheckWaits = 0
+        // 新的一集是新的���次播放：恢复预算还回去，之后再黑还能救。
+        recoveryAttempts = 0
+        softwareDecodeForNextPlay = false
+        danmaku.configure(plan: plan, enabled: danmakuEnabled)
+        guard let url = URL(string: plan.url) else {
+            debugInfo = "播放地址无效"
+            failedToken += 1
+            return
+        }
+        currentURL = url
+        hasDecryptionKey = !plan.decryptionKey.isEmpty
+        lastError = ""
+        activePlan = plan
+        activeDanmakuEnabled = danmakuEnabled
+        activeSpeed = speed
+        progress = PlaybackProgress(position: 0, duration: 0)
+        videoSize = nil
+        debugInfo = "正在加载…"
+        applyPerFileOptions(handle, plan: plan, start: start, speed: speed)
+        command(["loadfile", url.absoluteString, "replace"])
+        isPaused = getFlag("pause")
+        startProgressTimer()
+        updateIdleTimer()
+        scheduleVideoHealthCheck()
+    }
+
+    /// demuxer 的 libavformat 选项（重试、实验特性、扩展名、协议白名单、解密密钥）：
+    /// 首次起播（初始化前）与换集复用句柄（loadfile 前）共用同一份。
+    ///
+    /// 与 iOS 端 player_screen.dart 一致。注意：不要用 mpv 自身的 decryption-key 选项——
+    /// 在此构建下它不生效（时长能读出但时间一直停在 0、无画面无声）。
+    /// iOS 端用的是下面 demuxer-lavf-o 这一路，把密钥作为 FFmpeg demuxer 选项直接传给 libavformat。
+    private func lavfOptions(for plan: PlaybackPlan) -> [String] {
+        var options = [
+            "seg_max_retry=3",
+            "strict=experimental",
+            "allowed_extensions=ALL",
+            plan.local
+                ? "protocol_whitelist=[file,crypto,data]"
+                : "protocol_whitelist=[http,https,tcp,tls,crypto,data,file]",
+        ]
+        if !plan.decryptionKey.isEmpty {
+            options.append("decryption_key=\(plan.decryptionKey)")
+        }
+        return options
+    }
+
+    /// 换集时逐集不同的选项：复用句柄时在 loadfile 前更新。
+    /// demuxer 在每次打开文件时按当前选项创建，解密密钥因此随集生效；
+    /// 请求头无则清空，避免上一集的头漏给下一集；
+    /// 暂停状态与重建句柄时一致（新集默认起播，hero 的 startsPaused 则停在第一帧）。
+    private func applyPerFileOptions(_ handle: OpaquePointer, plan: PlaybackPlan,
+                                      start: Double, speed: Double) {
+        _ = mpv_set_option_string(handle, "demuxer-lavf-o", lavfOptions(for: plan).joined(separator: ","))
+        let fields = (!plan.local && !plan.headers.isEmpty)
+            ? plan.headers.map { "\($0.key): \($0.value)" }.joined(separator: ",")
+            : ""
+        _ = mpv_set_option_string(handle, "http-header-fields", fields)
+        // 每集都显式写起播点（含 0）：句柄是复用的，不清掉上一集的 start 会漏到下一集。
+        _ = mpv_set_option_string(handle, "start", "\(start)")
+        var speedValue = speed
+        _ = mpv_set_property(handle, "speed", MPV_FORMAT_DOUBLE, &speedValue)
+        setFlag("pause", startsPaused)
+    }
+
     private func destroyMpv() {
         playbackGeneration += 1
         healthCheckToken += 1
         progressTimer?.invalidate()
         progressTimer = nil
+        // 句柄没了，绑的图层记录也清掉（否则会被误判成可复用）。
+        handleLayer = nil
         // 播放器销毁时恢复系统空闲计时器，屏保才能正常出现。
         UIApplication.shared.isIdleTimerDisabled = false
         guard let handle = mpv else { return }

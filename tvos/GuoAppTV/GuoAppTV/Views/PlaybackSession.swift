@@ -13,9 +13,10 @@ final class PlaybackSession: ObservableObject {
     @Published private(set) var currentIndex: Int
     @Published private(set) var plan: PlaybackPlan?
     /// 出错时停掉句柄：恢复屏保（避免错误页常亮），重试时照常 load() → play()。
+    /// 出错时句柄状态不可信，连句柄一起销毁（换集才保留句柄复用）。
     @Published private(set) var error: String? {
         didSet {
-            if error != nil { controller.halt() }
+            if error != nil { controller.haltAndDestroy() }
         }
     }
 
