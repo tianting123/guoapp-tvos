@@ -25,4 +25,20 @@ enum UserFacingError {
         if error is URLError { return network }
         return message(for: error.localizedDescription)
     }
+
+    /// 诊断模式：把核心给的原始错误一起显示出来。
+    ///
+    /// 平时的文案会把网络类错误统一成一句、把英文技术报错换成通用句，
+    /// 排障时看不到真正的原因。这里在翻译后的文案后面补上原文，
+    /// 原样保留核心给的中文与英文报错，方便一眼定位是设备注册、签名还是接口返回变了。
+    static func diagnosticMessage(for text: String) -> String {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let friendly = message(for: trimmed)
+        guard !trimmed.isEmpty, trimmed != friendly else { return friendly }
+        return friendly + "\n\n原始错误：" + trimmed
+    }
+
+    static func diagnosticMessage(for error: any Error) -> String {
+        diagnosticMessage(for: error.localizedDescription)
+    }
 }

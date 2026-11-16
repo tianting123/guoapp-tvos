@@ -27,6 +27,8 @@ struct HomeView: View {
     @State private var selectedBoard = ""
     @State private var rankingBoardsSource = ""
     @State private var didApplyDefaultRanking = false
+    /// 诊断模式：打开后失败页会额外显示核心给的原始错误（设置 › 播放诊断）。
+    @AppStorage("playbackDiagnostics") private var diagnosticsEnabled = false
     /// 是否已应用过「红果默认展开榜单」：只应用一次，避免覆盖用户之后
     /// 手动点的分类或「全部」；视图存活期间选择一直保留。
 
@@ -109,7 +111,10 @@ struct HomeView: View {
         if loading && items.isEmpty {
             TheaterSkeleton()
         } else if let error, items.isEmpty {
-            TVFailureView(message: UserFacingError.message(for: error)) {
+            TVFailureView(
+                message: UserFacingError.message(for: error),
+                rawError: diagnosticsEnabled ? error : nil
+            ) {
                 Task { await reload(firstPage: true) }
             }
             .padding(.vertical, 90)

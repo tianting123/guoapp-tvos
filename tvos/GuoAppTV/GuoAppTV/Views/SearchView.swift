@@ -48,6 +48,8 @@ private struct SearchResultsView: View {
     let onOpen: (Drama) -> Void
 
     @EnvironmentObject private var store: Store
+    /// 诊断模式：打开后失败页会额外显示核心给的原始错误（设置 › 播放诊断）。
+    @AppStorage("playbackDiagnostics") private var diagnosticsEnabled = false
 
     var body: some View {
         ScrollView {
@@ -63,7 +65,10 @@ private struct SearchResultsView: View {
     @ViewBuilder
     private var resultSection: some View {
         if let error = model.error {
-            TVFailureView(message: error) {
+            TVFailureView(
+                message: UserFacingError.message(for: error),
+                rawError: diagnosticsEnabled ? error : nil
+            ) {
                 model.retry()
             }
             .padding(.vertical, 100)
@@ -113,7 +118,10 @@ private struct SearchResultsView: View {
             PosterGridSkeleton()
                 .padding(.top, 12)
         case .failed(let error):
-            TVFailureView(message: error) {
+            TVFailureView(
+                message: UserFacingError.message(for: error),
+                rawError: diagnosticsEnabled ? error : nil
+            ) {
                 model.loadPopular(force: true)
             }
             .padding(.vertical, 100)

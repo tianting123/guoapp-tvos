@@ -375,15 +375,27 @@ struct TVLoadingView: View {
 struct TVFailureView: View {
     let message: String
     let retry: () -> Void
+    /// 诊断模式：额外显示核心给的原始错误（排障用，平时关闭）。
+    var rawError: String? = nil
 
-    init(message: String, retry: @escaping () -> Void) {
+    init(message: String, rawError: String? = nil, retry: @escaping () -> Void) {
         self.message = message
         self.retry = retry
+        self.rawError = rawError
     }
-
     var body: some View {
         VStack(spacing: 28) {
             TVStatusView(icon: "exclamationmark.triangle", title: "出了点问题", message: message, expands: false)
+            if let rawError, !rawError.isEmpty {
+                Text(rawError)
+                    .font(.system(size: TVTheme.TextSize.caption2))
+                    .foregroundColor(.white.opacity(0.75))
+                    .multilineTextAlignment(.leading)
+                    .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.black.opacity(0.55))
+                    .cornerRadius(8)
+            }
             TVPrimaryButton(title: "重试", icon: "arrow.clockwise", action: retry)
         }
         .frame(maxWidth: .infinity)

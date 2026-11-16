@@ -20,6 +20,8 @@ struct DetailView: View {
     /// 详情未加载出来时回落到目录传来的剧信息。
     /// 补全信息（核心的 metadata）：红果剧缺评分或上线日期时进详情补一次。
     @State private var supplement: Drama?
+    /// 诊断模式：打开后失败页会额外显示核心给的原始错误（设置 › 播放诊断）。
+    @AppStorage("playbackDiagnostics") private var diagnosticsEnabled = false
 
     private var displayDrama: Drama { detail?.drama ?? drama }
 
@@ -169,7 +171,10 @@ struct DetailView: View {
             TVLoadingView("正在加载详情…")
                 .padding(.vertical, 80)
         } else if let error {
-            TVFailureView(message: error) {
+            TVFailureView(
+                message: UserFacingError.message(for: error),
+                rawError: diagnosticsEnabled ? error : nil
+            ) {
                 Task { await load() }
             }
             .padding(.vertical, 60)
