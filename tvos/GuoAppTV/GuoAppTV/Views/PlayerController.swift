@@ -288,7 +288,10 @@ final class PlayerController: NSObject, ObservableObject {
                                speed: Double = 1.0, isRecovery: Bool = false) {
         // 自愈重建（isRecovery）必须新建句柄：MoltenVK 渲染上下文可能已丢，旧句柄不可信。
         // 其余情况若句柄还在、且它绑的图层没换，就复用句柄换集（见 reuseHandle）。
-        if !isRecovery, let handle = mpv, handleLayer === metalLayer {
+        if let handle = mpv,
+           PlaybackRules.canReuseHandle(
+               hasHandle: true, sameLayer: handleLayer === metalLayer, isRecovery: isRecovery
+           ) {
             reuseHandle(handle, plan: plan, start: start, danmakuEnabled: danmakuEnabled, speed: speed)
             return
         }

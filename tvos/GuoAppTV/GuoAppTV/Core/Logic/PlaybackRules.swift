@@ -40,4 +40,12 @@ enum PlaybackRules {
     static func keepsPrefetch(prefetchedIndex: Int?, target: Int) -> Bool {
         prefetchedIndex == target || prefetchedIndex == target + 1
     }
+
+    /// 换集时能不能复用已有的 mpv 句柄（只更新逐集选项再 loadfile，跳过销毁重建）：
+    /// - 句柄还在（之前没销毁）；
+    /// - 句柄绑的图层没换（换了必须重建，否则画面绑在旧层上）；
+    /// - 不是自愈重建（MoltenVK 渲染上下文可能已丢，旧句柄不可信，必须新建）。
+    static func canReuseHandle(hasHandle: Bool, sameLayer: Bool, isRecovery: Bool) -> Bool {
+        hasHandle && sameLayer && !isRecovery
+    }
 }

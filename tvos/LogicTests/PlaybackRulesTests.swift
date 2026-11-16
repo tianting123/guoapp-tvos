@@ -53,4 +53,15 @@ struct PlaybackRulesTests {
         #expect(!PlaybackRules.disablesIdleTimer(hasPlayer: false, paused: false, keepsScreenAwake: true))
         #expect(!PlaybackRules.disablesIdleTimer(hasPlayer: true, paused: false, keepsScreenAwake: false))
     }
+
+    /// 换集复用句柄：句柄还在、图层没换、且不是自愈重建 —— 三个条件都满足才复用。
+    @Test func reusesTheHandleOnlyWhenItIsStillTrustworthy() {
+        #expect(PlaybackRules.canReuseHandle(hasHandle: true, sameLayer: true, isRecovery: false))
+        // 句柄没了（首次起播 / 刚销毁）：必须新建。
+        #expect(!PlaybackRules.canReuseHandle(hasHandle: false, sameLayer: true, isRecovery: false))
+        // 图层换了（视图重建）：旧句柄绑在旧图层上，必须重建。
+        #expect(!PlaybackRules.canReuseHandle(hasHandle: true, sameLayer: false, isRecovery: false))
+        // 自愈重建：渲染上下文可能已丢，旧句柄不可信，必须新建。
+        #expect(!PlaybackRules.canReuseHandle(hasHandle: true, sameLayer: true, isRecovery: true))
+    }
 }
