@@ -66,6 +66,13 @@ jobs:
           go-version-file: upstream/native/go.mod
           cache-dependency-path: upstream/native/go.sum
       # Go 核心测试不阻塞出包（与原单仓行为一致），结果仍会显示在运行详情里。
+      # 但「能不能编译」必须拦：站源代码编不过时出包会失败，还可能把坏包发出去。
+      - name: Go 核心编译检查
+        run: go build ./...
+        working-directory: upstream/native
+      - name: Go 核心编译检查（全站源）
+        run: go build -ldflags="-X duanjuapp/native/core.buildAllSources=true" ./...
+        working-directory: upstream/native
       - run: go test -race ./...
         working-directory: upstream/native
         continue-on-error: true

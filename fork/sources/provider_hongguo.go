@@ -108,6 +108,17 @@ func (p *hongguoProvider) resolveHongguoMedia(ctx context.Context, task core.Tas
 	if !hongguoNumericID.MatchString(videoID) || !hongguoNumericID.MatchString(seriesID) {
 		return core.ProviderMedia{}, fmt.Errorf("红果章节 ID 无效，请重新获取章节")
 	}
+	// 先走官方 App 现在用的那条 GET（video_tab）。站方在 2026-10-27 起连续改过
+	// 取址与签名的校验方式，旧的 POST /novel/player/video_model/v1/ 一族已被关掉：
+	// 带签名的请求一律回 HTTP 200 + 0 字节（软拦截），所以先试新的。
+	media, tabErr := p.resolveHongguoTabMedia(ctx, videoID)
+	if tabErr == nil {
+		return media, nil
+	}
+	if err := ctx.Err(); err != nil {
+		return core.ProviderMedia{}, err
+	}
+	// 新路不行再退回旧路（万一站方把 video_tab 也关了，旧路偶尔还能通）。
 	media, nativeErr := p.resolveHongguoAppMedia(ctx, videoID)
 	if nativeErr == nil {
 		return media, nil
@@ -122,7 +133,7 @@ func (p *hongguoProvider) resolveHongguoMedia(ctx context.Context, task core.Tas
 	if err := ctx.Err(); err != nil {
 		return core.ProviderMedia{}, err
 	}
-	return core.ProviderMedia{}, fmt.Errorf("红果 App 取流失败：%v；网页取流失败：%w", core.PublicError(nativeErr), core.PublicError(pageErr))
+	return core.ProviderMedia{}, fmt.Errorf("红果取流失败：%v；网页取流失败：%w", core.PublicError(tabErr), core.PublicError(pageErr))
 }
 
 func (p *hongguoProvider) resolveHongguoWebMedia(ctx context.Context, seriesID, videoID string) (core.ProviderMedia, error) {
