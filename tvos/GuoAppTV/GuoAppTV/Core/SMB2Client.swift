@@ -26,6 +26,8 @@ actor SMB2Client {
     /// 服务端在 NEGOTIATE 响应里给出的会话密钥与签名算法。
     private var sessionKey: [UInt8] = []
     private var signingRequired = false
+    /// 实际使用的签名算法：SMB 3.0 起是 AES-128-CMAC，2.x 是 HMAC-SHA256。
+    private var signingAlgorithm: SMB2Signing.Algorithm = .hmacSHA256
     /// 服务端选中的方言版本。
     private var serverDialect: UInt16 = 0
 
@@ -144,6 +146,8 @@ actor SMB2Client {
             let dialect = UInt16(responseBytes[68]) | (UInt16(responseBytes[69]) << 8)
             serverDialect = dialect
         }
+        // 签名算法按协商到的方言选：SMB 3.0 起是 AES-128-CMAC，2.x 是 HMAC-SHA256。
+        signingAlgorithm = SMB2Signing.Algorithm.select(dialect: serverDialect, signingAlgorithmId: nil)
         #if DEBUG
         print("[SMB2] NEGOTIATE 成功：方言 0x\(String(serverDialect, radix: 16))，要求签名 \(signingRequired)")
         #endif
@@ -478,6 +482,12 @@ actor SMB2Client {
         // **没有 BodyLength 字段**（impacket 的 SMB2Packet 也证实）。
         var message = header.encoded()
         message.append(contentsOf: body)
+        // 服务端要求签名时（群晖 / fnOS 默认要求）：用会话密钥给整条报文签名。
+        // 不签的话 SESSION_SETUP 之后服务端直接断开，表现为「连不上」。
+        // 会话密钥还没拿到时（NEGOTIATE / SESSION_SETUP 本身）不签 —— 那几条按协议本来就不签。
+        if signingRequired, !sessionKey.isEmpty {
+            SMB2Signing.sign(&message, sessionKey: sessionKey, algorithm: signingAlgorithm)
+        }
         // NetBIOS over TCP：4 字节长度前缀（1 字节类型 0x00 + 3 字节大端长度）。
         // 必须带长度前缀，否则服务端无法确定报文边界，会直接断开连接。
         var packet = [UInt8](repeating: 0, count: 4)
@@ -514,6 +524,15 @@ actor SMB2Client {
         // Data 的索引起点不保证是 0（切片后会是 4），下标取值容易踩坑。
         let rawBytes = [UInt8](raw)
         guard rawBytes.count >= 12 else { throw SMBError.unexpectedResponse }
+        // 服务端要求签名时，响应也带签名：拿会话密钥校验。
+        // 密钥还没拿到的那几步（NEGOTIATE / SESSION_SETUP）不校验。
+        if signingRequired, !sessionKey.isEmpty,
+           !SMB2Signing.verify(rawBytes, sessionKey: sessionKey, algorithm: signingAlgorithm) {
+            #if DEBUG
+            print("[SMB2] 响应签名校验失败")
+            #endif
+            throw SMBError.invalidSignature
+        }
         let status = UInt32(rawBytes[8]) | (UInt32(rawBytes[9]) << 8)
             | (UInt32(rawBytes[10]) << 16) | (UInt32(rawBytes[11]) << 24)
         let result = Response(header: parsed, status: status, data: raw)
@@ -643,6 +662,7 @@ enum SMBError: LocalizedError {
     case connectionClosed
     case unexpectedResponse
     case authenticationFailed
+    case invalidSignature
     case shareNotFound(String)
     case fileNotFound(String)
     case status(UInt32)
@@ -657,6 +677,8 @@ enum SMBError: LocalizedError {
             return "服务器返回了无法识别的响应"
         case .authenticationFailed:
             return "认证失败，请检查用户名与密码"
+        case .invalidSignature:
+            return "服务器要求会话签名，但签名校验未通过（服务端可能要求 SMB 3.x 的加密算法）"
         case .shareNotFound(let name):
             return "找不到共享「\(name)」"
         case .fileNotFound(let path):

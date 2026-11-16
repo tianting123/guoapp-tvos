@@ -188,7 +188,9 @@ Caches。**系统在存储不足时可能清理 Caches**，追剧与进度可能
 
 - **SMB 共享**（主要方式）：自研 SMB2 客户端（`Core/SMB2Protocol.swift`、
   `SMB2Client.swift`），支持 NTLMv2 认证（`NTLM.swift` + `Hashing.swift`，
-  含 MD4/MD5/HMAC-MD5）、读写、覆盖写时截断旧尾部。
+  含 MD4/MD5/HMAC-MD5）、**会话签名**（`Core/Logic/SMB2Signing.swift`：
+  SMB 2.x 用 HMAC-SHA256、SMB 3.0 起用 AES-128-CMAC，组播/群晖默认要求签名，
+  不签会被服务端在认证后直接断开）、读写、覆盖写时截断旧尾部。
 - **WebDAV**（备份方式）：Basic / Digest 认证，支持 PROPFIND、MKCOL、PUT、GET。
 - **同步频率**：不自动同步 / 每 3 / 10 / 30 / 60 / 300 秒；观看进度约每 5 秒落一次
   本地盘并重置远端防抖计时，远端任务等所选间隔后写入。「立即备份 / 立即恢复」手动触发。
@@ -235,13 +237,26 @@ python3 scripts/deploy_tvos.py [--all-sources]
   `GUOAPP_TEAM_ID` / `GUOAPP_BUNDLE_ID` / `GUOAPP_TV_DEVICE`。
 - 真果鉴（`--all-sources`）包名自动加 `.all`，两个版本可同时安装。
 
+### SMB 的已知限制
+
+自研客户端只覆盖「读���写一个 JSON 文件」这个用途，以下不支持：
+
+- **SMB 加密**（SMB 3.x 的 encryption）—— 与 NAS 协商时不会启用；
+- **SMB 3.1.1 的预认证完整性哈希** —— 协商时**故意降到 3.0.2**（不声明 3.1.1），
+  否则服务端会校验 SESSION_SETUP 里的哈希值，自己算要处理 negotiate context 的 salt 与 padding；
+- **多通道**（multichannel）；
+- **SMB1**。
+
+签名按协商到的方言自动选算法：SMB 2.0.2 / 2.1 用 HMAC-SHA256，SMB 3.0 起用 AES-128-CMAC。
+群晖、fnOS 默认要求签名 —— 不签会在认证通过后被服务端直接断开，表现为「连不上」。
+
 ## 目录结构
 
 | 目录 / 文件 | 说明 |
 | --- | --- |
-| `tvos/GuoAppTV/GuoAppTV/Core/` | 应用核心：`Client`（Go 协议）、`Store`（状态与同步）、`Models`、`StorageBackend` / `SMB2Client` / `WebDAVStore`（远端存储）、`NTLM` / `Hashing`（认证）、`SourceAccount`（站源账号）、`Logic/`（28 个业务逻辑模块） |
+| `tvos/GuoAppTV/GuoAppTV/Core/` | 应用核心：`Client`（Go 协议）、`Store`（状态与同步）、`Models`、`StorageBackend` / `SMB2Client` / `WebDAVStore`（远端存储）、`NTLM` / `Hashing`（认证）、`SourceAccount`（站源账号）、`Logic/`（30 个业务逻辑模块，含 `SMB2Signing`） |
 | `tvos/GuoAppTV/GuoAppTV/Views/` | 界面：首页 / 搜索 / 详情 / 剧场 / 我的、播放器（`PlayerView` + `PlayerController` + `PlaybackSession` + `PlayerControlsView`）、`StorageSettingsView`、`SourceAccountView`、`SliderCaptchaView` |
-| `tvos/LogicTests/` | 逻辑层单元测试（28 个文件） |
+| `tvos/LogicTests/` | 逻辑层单元测试（30 个文件） |
 | `upstream/` | 上游仓库 git submodule，Go 核心在 `upstream/native/`（见上文「Fork 了哪些上游项目」） |
 | `fork/sources/` | 本仓自带的站源包（覆盖上游 `native/sources/`，54 个文件），含红果出品方与设备注册实现 |
 | `fork/patches/` | 对上游 core 的最小补丁（`Producer` 字段与两个 action） |

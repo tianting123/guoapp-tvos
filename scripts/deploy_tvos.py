@@ -104,7 +104,10 @@ def build_signed_app(settings: DeploySettings, bundle_id: str, variant: BuildVar
         # 让 xcodebuild 无界面地注册包名、生成 / 续签开发描述文件。
         '-allowProvisioningUpdates',
         'CODE_SIGN_STYLE=Automatic', f'DEVELOPMENT_TEAM={settings.team}',
-        f'PRODUCT_BUNDLE_IDENTIFIER={bundle_id}', *xcode_settings(variant, read_version()), 'build',
+        # 包名放在 xcode_settings 之后：xcode_settings 里也会带 PRODUCT_BUNDLE_IDENTIFIER
+        # （工程默认包名 + 真果鉴的 .all 后缀），这里用自己账号的包名覆盖它。
+        *xcode_settings(variant, read_version()),
+        f'PRODUCT_BUNDLE_IDENTIFIER={bundle_id}', 'build',
     ]
     with open(log, 'w') as output:
         result = subprocess.run(arguments, cwd=root, stdout=output, stderr=subprocess.STDOUT)

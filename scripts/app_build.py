@@ -34,6 +34,12 @@ class BuildVariant:
     def linker_flags(self):
         return '-s -w'
 
+    @property
+    def bundle_id(self):
+        # 真果鉴包名加 .all 后缀，两个 flavor 可以同时装在一台 Apple TV 上
+        # （包名相同会互相覆盖，只能留一个）。
+        return 'com.duanju.guoapp.tv' + ('.all' if self.all_sources else '')
+
 
 def add_variant_argument(parser):
     parser.add_argument('--all-sources', action='store_true',

@@ -158,10 +158,12 @@ def xcode_settings(variant, version):
     # 关于页显示的版本以根目录 VERSION 为准：构建时覆盖工程里的 MARKETING_VERSION；
     # 显示名按版本区分（火龙果短剧 / 真果鉴），作为构建设置在签名前写进 Info.plist；
     # 核心版本（upstream 短哈希）同样写进 Info.plist 的 GUOAppCoreRevision。
+    # 包名按 flavor 区分（真果鉴加 .all），两个版本才能同时装在一台 Apple TV 上。
     return [
         f'MARKETING_VERSION={version}',
         f'GUOAPP_DISPLAY_NAME={variant.display_name}',
         f'GUOAPP_CORE_REVISION={core_revision()}',
+        f'PRODUCT_BUNDLE_IDENTIFIER={variant.bundle_id}',
     ]
 
 

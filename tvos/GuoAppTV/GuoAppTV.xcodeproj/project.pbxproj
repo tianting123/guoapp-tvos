@@ -68,6 +68,7 @@
 		A10000000000000000000014 /* WebDAVStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000013 /* WebDAVStore.swift */; };
 		A10000000000000000000016 /* SMB2Protocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000015 /* SMB2Protocol.swift */; };
 		A10000000000000000000018 /* SMB2Client.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000017 /* SMB2Client.swift */; };
+		A10000000000000000000051 /* SMB2Signing.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000039 /* SMB2Signing.swift */; };
 		A10000000000000000000032 /* SMBStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000019 /* SMBStore.swift */; };
 		A10000000000000000000034 /* NTLM.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000033 /* NTLM.swift */; };
 		A10000000000000000000036 /* Hashing.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000035 /* Hashing.swift */; };
@@ -153,6 +154,7 @@
 		A10000000000000000000013 /* WebDAVStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebDAVStore.swift; sourceTree = "<group>"; };
 		A10000000000000000000015 /* SMB2Protocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SMB2Protocol.swift; sourceTree = "<group>"; };
 		A10000000000000000000017 /* SMB2Client.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SMB2Client.swift; sourceTree = "<group>"; };
+		A10000000000000000000039 /* SMB2Signing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Logic/SMB2Signing.swift; sourceTree = "<group>"; };
 		A10000000000000000000019 /* SMBStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SMBStore.swift; sourceTree = "<group>"; };
 		A10000000000000000000033 /* NTLM.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NTLM.swift; sourceTree = "<group>"; };
 		A10000000000000000000035 /* Hashing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Hashing.swift; sourceTree = "<group>"; };
@@ -231,6 +233,7 @@ A10000000000000000000000 /* StorageBackend.swift */,
 				A1000000000000000000005A /* EpisodeRanges.swift */,
 				A1000000000000000000F004 /* CertificatePinning.swift */,
 				A1000000000000000000F002 /* SourceSwitch.swift */,
+				A10000000000000000000039 /* SMB2Signing.swift */,
 				A1000000000000000000005C /* WatchStatus.swift */,
 				A1000000000000000000005E /* ResumeTarget.swift */,
 				A10000000000000000000068 /* SeriesTitle.swift */,
@@ -395,6 +398,7 @@ A10000000000000000000037 /* StorageSettingsView.swift */,
 				A10000000000000000000014 /* WebDAVStore.swift in Sources */,
 				A10000000000000000000016 /* SMB2Protocol.swift in Sources */,
 				A10000000000000000000018 /* SMB2Client.swift in Sources */,
+				A10000000000000000000051 /* SMB2Signing.swift in Sources */,
 				A10000000000000000000032 /* SMBStore.swift in Sources */,
 				A10000000000000000000034 /* NTLM.swift in Sources */,
 				A10000000000000000000036 /* Hashing.swift in Sources */,
@@ -509,7 +513,7 @@ A10000000000000000000037 /* StorageSettingsView.swift */,
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 2.60;
+				MARKETING_VERSION = 2.61;
 				ONLY_ACTIVE_ARCH = YES;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
@@ -550,7 +554,7 @@ A10000000000000000000037 /* StorageSettingsView.swift */,
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 2.60;
+				MARKETING_VERSION = 2.61;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-Wl,-u,_DuanjuRequest",
