@@ -37,10 +37,6 @@ const (
 	hongguoPlaybackTabUserAgent = "com.phoenix.read/73932 (Linux; U; Android 16; zh_CN; 25053RT47C; Build/BP2A.250605.031.A3; Cronet/TTNetVersion:04657795 2026-01-23 QuicVersion:c67e9834 2025-09-08)"
 	// 一次取址最多换几个身份：站方发号大约一半好，八个全坏的概率约 0.4%。
 	hongguoPlaybackMaxIdentities = 8
-	// 一个身份最多问几次。坏号是永久坏的，问第三次没意义；但只问一次太急。
-	hongguoPlaybackAttemptsPerIdentity = 2
-	// 同一个身份的两次询问之间等多久。
-	hongguoPlaybackRetryGap = 500 * time.Millisecond
 	// 一个注册身份最多用多久（两小时换一次，避免站方慢慢不看它了）。
 	hongguoPlaybackIdentityMaxAge = 2 * time.Hour
 )
@@ -83,6 +79,11 @@ func (p *hongguoProvider) resolveHongguoTabMedia(ctx context.Context, videoID st
 }
 
 // hongguoTabVideoModel：拿一个身份问这一集；这个身份整轮都空答，就换一个新身份再问。
+//
+// 站方对这条 GET 会**按请求随机回空答**（HTTP 200 + 0 字节）：不是限流、不是设备问题，
+// 是掷骰子。实测主域对某些客户端持续空答、备用域偶尔能出。
+// 所以同一个身份的几次询问是**并发发出**的 —— 串行问等于按骰子的顺序排队，
+// 并发问是一把梭，同一批里只要有一个不是空答就拿到了。
 func (p *hongguoProvider) hongguoTabVideoModel(ctx context.Context, videoID string) (map[string]any, error) {
 	var identity *hongguoPlaybackIdentity
 	var failure error
@@ -101,25 +102,16 @@ func (p *hongguoProvider) hongguoTabVideoModel(ctx context.Context, videoID stri
 			}
 			identity = fresh
 		}
-		for attempt := 0; attempt < hongguoPlaybackAttemptsPerIdentity; attempt++ {
-			if attempt > 0 {
-				select {
-				case <-time.After(hongguoPlaybackRetryGap):
-				case <-ctx.Done():
-					return nil, ctx.Err()
-				}
-			}
-			model, err := p.hongguoTabVideoModelOnce(ctx, videoID, identity)
-			if err != nil {
-				failure = err
-				continue
-			}
-			if model != nil {
-				return model, nil
-			}
-			sawEmpty = true
+		model, err := p.hongguoTabVideoModelWave(ctx, videoID, identity)
+		if err != nil {
+			failure = err
 		}
+		if model != nil {
+			return model, nil
+		}
+		sawEmpty = true
 		// 这个身份整轮都空答：坏号是永久坏的（实测），留着只会一直空答。丢掉换新的。
+		p.dropHongguoPlaybackIdentity()
 		identity = nil
 	}
 
@@ -132,6 +124,55 @@ func (p *hongguoProvider) hongguoTabVideoModel(ctx context.Context, videoID stri
 	return nil, errors.New("红果取址接口未返回有效数据（站方连续返回空答）")
 }
 
+// hongguoTabVideoModelWave：并发发出几波询问，拿到第一个有数据的就返回。
+//
+// 同一波里各次询问用的是**同一份 query 与同一份签名**（签名绑的是 query 原文，
+// 多次发同一份是最省事也最不容易算错的做法）。站方按请求随机决定答不答，
+// 所以并发比串行快得多、命中率高得多。
+func (p *hongguoProvider) hongguoTabVideoModelWave(ctx context.Context, videoID string,
+	identity *hongguoPlaybackIdentity) (map[string]any, error) {
+	const waveSize = 6
+	// 同一波里各次询问用**同一份 query 与同一份签名**：签名绑的是 query 原文，
+	// 多次发同一份是最不容易算错的做法；站方是按请求随机决定答不答，
+	// 所以这一波里只要有一个不是空答就拿到了。
+	stamp := time.Now().Unix()
+	query := hongguoPlaybackQuery(videoID, identity, stamp, time.Now().UnixMilli())
+	signature := hongguoSign551Headers(query, "", stamp)
+	if len(signature) == 0 {
+		return nil, errors.New("红果签名生成失败")
+	}
+	results := make(chan map[string]any, waveSize)
+	errs := make(chan error, waveSize)
+	for i := 0; i < waveSize; i++ {
+		go func() {
+			model, err := p.hongguoTabVideoModelWithQuery(ctx, query, signature, videoID)
+			if err != nil {
+				errs <- err
+				return
+			}
+			if model != nil {
+				results <- model
+				return
+			}
+			errs <- nil
+		}()
+	}
+	var lastErr error
+	for i := 0; i < waveSize; i++ {
+		select {
+		case model := <-results:
+			return model, nil
+		case err := <-errs:
+			if err != nil {
+				lastErr = err
+			}
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	return nil, lastErr
+}
+
 // hongguoTabVideoModelOnce：一次 GET；空答、结构不对、业务码非 0 都算没有。
 func (p *hongguoProvider) hongguoTabVideoModelOnce(ctx context.Context, videoID string,
 	identity *hongguoPlaybackIdentity) (map[string]any, error) {
@@ -141,7 +182,12 @@ func (p *hongguoProvider) hongguoTabVideoModelOnce(ctx context.Context, videoID 
 	if len(signature) == 0 {
 		return nil, errors.New("红果签名生成失败")
 	}
+	return p.hongguoTabVideoModelWithQuery(ctx, query, signature, videoID)
+}
 
+// hongguoTabVideoModelWithQuery：用给定的 query 与签名发一次取址请求。
+func (p *hongguoProvider) hongguoTabVideoModelWithQuery(ctx context.Context, query string,
+	signature map[string]string, videoID string) (map[string]any, error) {
 	var lastErr error
 	for _, host := range []string{hongguoPlaybackHostPrimary, hongguoPlaybackHostBackup} {
 		body, err := p.hongguoPlaybackText(ctx, host, query, signature)
