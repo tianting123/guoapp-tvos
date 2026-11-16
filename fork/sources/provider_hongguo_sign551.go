@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/hex"
+	"fmt"
 	"math/bits"
 	"strings"
 )
@@ -314,21 +315,26 @@ func hongguoSimonEncryptPadded(protobuf []byte) []byte {
 // hongguoSign551BodyHash：body 的 SM3 前 6 字节；没有 body 时是 16 个零字节的 SM3 前 6 字节。
 func hongguoSign551BodyHash(stubHex string) []byte {
 	if stubHex == "" {
-		return hongguoSM3(make([]byte, 16))[:6]
+		sum := hongguoSM3(make([]byte, 16))
+		return sum[:6]
 	}
 	raw, err := hex.DecodeString(stubHex)
 	if err != nil {
-		return hongguoSM3(make([]byte, 0))[:6]
+		sum := hongguoSM3(make([]byte, 0))
+		return sum[:6]
 	}
-	return hongguoSM3(raw)[:6]
+	sum := hongguoSM3(raw)
+	return sum[:6]
 }
 
 // hongguoSign551QueryHash：query 原文的 SM3 前 6 字节。
 func hongguoSign551QueryHash(query string) []byte {
 	if query == "" {
-		return hongguoSM3(make([]byte, 16))[:6]
+		sum := hongguoSM3(make([]byte, 16))
+		return sum[:6]
 	}
-	return hongguoSM3([]byte(query))[:6]
+	sum := hongguoSM3([]byte(query))
+	return sum[:6]
 }
 
 // MARK: - x-ladon
@@ -399,7 +405,9 @@ func hongguoSign551DecryptArgus(argusBase64 string) []byte {
 func hongguoSign551Ladon(khronos int64, lcID int64, aid int64, randomBytes []byte) string {
 	data := formatInt64(khronos) + "-" + formatInt64(lcID) + "-" + formatInt64(aid)
 	sum := md5.Sum(append(append([]byte(nil), randomBytes...), []byte(formatInt64(aid))...))
-	table := hongguoLadonExpandTable(sum[:])
+	// ⚠️ 表的种子是 MD5 的**十六进制字符串**（32 字节），不是原始 16 字节 ——
+	// 用原始字节会得到不一样的表，签名就不对了。
+	table := hongguoLadonExpandTable([]byte(fmt.Sprintf("%x", sum)))
 	size := len(data)
 	newSize := size + (16 - size%16)
 	input := make([]byte, newSize)

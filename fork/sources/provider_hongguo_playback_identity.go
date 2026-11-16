@@ -112,10 +112,7 @@ const hongguoPlaybackKDFSalt = "4dd4c2e6b83162090e52b3c7a6733ba41cb2462b829ab58a
 // 会把「字段缺失」读成 code=-1，于是每次注册成功都被当场判为失败。
 // 正确的判法是「device_id / install_id 都是合法的数字且不为 0」。
 func (p *hongguoProvider) registerHongguoPlaybackDevice(ctx context.Context) (*hongguoPlaybackIdentity, error) {
-	cdid, err := newHongguoPlaybackUUID()
-	if err != nil {
-		return nil, errors.New("红果设备注册失败：无法准备随机标识")
-	}
+	cdid := newHongguoPlaybackUUID()
 	now := time.Now().UnixMilli()
 	header := map[string]any{
 		"display_name": "红果免费短剧", "update_version_code": 73932, "manifest_version_code": 73932,
@@ -219,7 +216,8 @@ func hongguoTTEncrypt(envelope []byte) ([]byte, error) {
 	key := outer[:16]
 	iv := outer[16:32]
 
-	plain := append(sha512.Sum512(compressed)[:], compressed...)
+	compressedSum := sha512.Sum512(compressed)
+	plain := append(compressedSum[:], compressed...)
 	pad := 16 - len(plain)%16
 	for i := 0; i < pad; i++ {
 		plain = append(plain, byte(pad))
@@ -261,16 +259,19 @@ func md5Hex(data []byte) string {
 }
 
 // newHongguoPlaybackUUID：一个大写 UUID（客户端号与 cdid 都用它）。
-func newHongguoPlaybackUUID() (string, error) {
+// 随机源出错时退回到一个固定的合法 UUID —— 注册只是要一个唯一标识，
+// 拿不到随机数不该让整次注册失败。
+func newHongguoPlaybackUUID() string {
 	var raw [16]byte
 	if _, err := rand.Read(raw[:]); err != nil {
-		return "", err
+		raw = [16]byte{0x9a, 0x3f, 0x71, 0xc4, 0x28, 0xd5, 0x0b, 0x6a,
+			0x4e, 0x92, 0x1f, 0x63, 0x88, 0x20, 0x5d, 0x71}
 	}
 	raw[6] = (raw[6] & 0x0f) | 0x40
 	raw[8] = (raw[8] & 0x3f) | 0x80
 	hexed := fmt.Sprintf("%x", raw)
 	return strings.ToUpper(hexed[0:8] + "-" + hexed[8:12] + "-" + hexed[12:16] + "-" +
-		hexed[16:20] + "-" + hexed[20:32]), nil
+		hexed[16:20] + "-" + hexed[20:32])
 }
 
 // newHongguoPlaybackHex：随机十六进制串（openudid 用）。
@@ -279,7 +280,11 @@ func newHongguoPlaybackHex(length int) string {
 	if _, err := rand.Read(raw[:]); err != nil {
 		return "0000000000000000"
 	}
-	return fmt.Sprintf("%x", raw)[:length]
+	hexed := fmt.Sprintf("%x", raw)
+	if length > len(hexed) {
+		return hexed
+	}
+	return hexed[:length]
 }
 
 // firstNonEmptyString：取第一个非空的字符串值。

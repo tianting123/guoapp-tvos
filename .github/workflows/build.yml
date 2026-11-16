@@ -65,20 +65,29 @@ jobs:
         with:
           go-version-file: upstream/native/go.mod
           cache-dependency-path: upstream/native/go.sum
-      # Go 核心测试不阻塞出包（与原单仓行为一致），结果仍会显示在运行详情里。
-      # 但「能不能编译」必须拦：站源代码编不过时出包会失败，还可能把坏包发出去。
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.14'
+      # ⭐ 必须先打上 fork 覆盖层再编译：站源包在 fork/sources/，
+      # 不覆盖的话编译的是上游原始源码，**我们自己的 Go 代码一个都编不到**，
+      # 错误要等到出包那一步才暴露（2026-11-16 的 2.65 就是这么炸的）。
+      - name: 打上 fork 覆盖层
+        run: python scripts/apply_fork_overlay.py
+      # 编译必须拦：站源代码编不过时出包会失败，还可能把坏包发出去。
       - name: Go 核心编译检查
         run: go build ./...
         working-directory: upstream/native
       - name: Go 核心编译检查（全站源）
         run: go build -ldflags="-X duanjuapp/native/core.buildAllSources=true" ./...
         working-directory: upstream/native
-      - run: go test -race ./...
+      # 测试也拦：站源包里有黄金向量测试（x-argus / x-ladon 与上游逐字节对比），
+      # 签名移植错一个位就是静默失败，只有这些测试能挡住。
+      - name: Go 核心测试
+        run: go test -race ./...
         working-directory: upstream/native
-        continue-on-error: true
-      - run: go test -race -ldflags="-X duanjuapp/native/core.buildAllSources=true" ./...
+      - name: Go 核心测试（全站源）
+        run: go test -race -ldflags="-X duanjuapp/native/core.buildAllSources=true" ./...
         working-directory: upstream/native
-        continue-on-error: true
 
   tvos:
     needs: prepare
