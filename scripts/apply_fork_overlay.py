@@ -100,11 +100,25 @@ def main():
     #    本仓自带 fork/sources/ 保证站源可用且构建可复现。
     #    逐文件覆盖而不是整目录删除：这样重复运行不会误删，
     #    也避免删掉上游目录里本仓没有的文件。
+    #
+    #    但「本仓删掉某个文件」时，上游目录里那份会留下来 —— 上游目录是构建态，
+    #    残留的旧文件会和新文件一起参与编译，出现「函数重复声明」这类怪错误。
+    #    所以这里记一份上一次的 fork 文件清单：本次不在清单里的旧文件删掉。
     count = 0
     if fork_sources.is_dir():
         sources.mkdir(parents=True, exist_ok=True)
+        manifest = fork_sources / '.overlay-manifest.txt'
+        previous = set()
+        if manifest.exists():
+            previous = {line.strip() for line in manifest.read_text().splitlines() if line.strip()}
+        current = {source.name for source in fork_sources.glob('*.go')}
+        for stale in sorted(previous - current):
+            target = sources / stale
+            if target.exists():
+                target.unlink()
         for source in sorted(fork_sources.glob('*.go')):
             shutil.copy2(source, sources / source.name)
+        manifest.write_text('\n'.join(sorted(current)) + '\n', encoding='utf-8')
         count = len(list(sources.glob('*.go')))
     # 6. 生成 go.work 与 bridge/sources_gen.go，接入本仓的站源包。
     #    这两处上游不入库（上游 .gitignore 已忽略），每次构建重生成。
