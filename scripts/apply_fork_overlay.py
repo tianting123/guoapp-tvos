@@ -69,9 +69,19 @@ def main():
         target = core / source.name
         if target.exists():
             target.unlink()
+    # 2b. 删掉上次拷入的 fork 资源目录（如内置 JS 站源模块）。
+    for source in (fork_dir / 'core').iterdir():
+        if source.is_dir():
+            target = core / source.name
+            if target.is_dir():
+                shutil.rmtree(target)
     # 3. 拷入 fork 新增文件。
     for source in sorted((fork_dir / 'core').glob('*.go')):
         shutil.copy2(source, core / source.name)
+    # 3b. 拷入 fork 资源目录（内置 JS 站源模块：core/bundled/<id>/{manifest.json,main.js}）。
+    for source in sorted((fork_dir / 'core').iterdir()):
+        if source.is_dir():
+            shutil.copytree(source, core / source.name)
     # 4. 打补丁（先逐个 --check，报错时指出是哪个文件）。
     # 补丁文件在 Windows 检出时可能被转成 CRLF，而目标 .go 文件固定是 LF，
     # 行尾不一致时 git apply 会直接失败；这里先统一转成 LF 再打。

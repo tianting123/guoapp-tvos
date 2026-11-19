@@ -43,6 +43,11 @@ func init() {
 	if !sourceEnabledInFlavor("hongguo") {
 		return
 	}
+	// 红果默认用官方 JS 模块（内置在 core/bundled/hongguo/）。
+	// 要用本仓的 Go 版，把 sourceGoHongguoEnabled 改成 true。
+	if !sourceHongguoRegisteredByGo() {
+		return
+	}
 	core.Register(hongguoDescriptor, func(host core.Host) core.Provider { return &hongguoProvider{host: host, client: newHongguoAppClient()} })
 }
 

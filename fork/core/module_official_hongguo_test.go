@@ -18,22 +18,43 @@ import (
 //
 // ⭐ 这个测试要打真实网络，默认不跑：
 //
-//	HONGGUO_MODULE_DIR=/path/to/hongguo \
-//	go test -run TestOfficialHongguoModuleLive -v ./core/
+//	HONGGUO_LIVE=1 go test -run TestOfficialHongguoModuleLive -v ./core/
 //
+// 模块来源默认用**打进包的 embed 内置模块**（即真正交付的那份）；
+// 也可用 HONGGUO_MODULE_DIR 指向外部目录覆盖（调试用）。
 // videoID 可以用环境变量 HONGGUO_VIDEO_ID 覆盖。
 func TestOfficialHongguoModuleLive(t *testing.T) {
-	modulePath := os.Getenv("HONGGUO_MODULE_DIR")
-	if modulePath == "" {
-		t.Skip("设置 HONGGUO_MODULE_DIR 指向官方红果模块目录后才会跑（要打真实网络）")
+	if os.Getenv("HONGGUO_LIVE") != "1" {
+		t.Skip("设置 HONGGUO_LIVE=1 后才会跑（要打真实网络）")
+	}
+	var module *jsModule
+	if directory := os.Getenv("HONGGUO_MODULE_DIR"); directory != "" {
+		loaded, err := readModule(directory)
+		if err != nil {
+			t.Fatal(err)
+		}
+		module = loaded
+		t.Logf("用外部目录的模块：%s", directory)
+	} else {
+		bundled, failures := readBundledModules()
+		if len(failures) > 0 {
+			t.Fatalf("读取内置模块失败：%v", failures)
+		}
+		item, ok := bundled["hongguo"]
+		if !ok {
+			t.Fatal("内置模块里没有 hongguo")
+		}
+		// 内置模块存的是原始清单与代码，走和外部模块同一条 parseModule 编译路径。
+		loaded, err := parseModule(item.raw, item.code)
+		if err != nil {
+			t.Fatalf("编译内置红果模块失败：%v", err)
+		}
+		module = loaded
+		t.Log("用打进包的 embed 内置模块")
 	}
 	videoID := os.Getenv("HONGGUO_VIDEO_ID")
 	if videoID == "" {
 		videoID = "7704532501426867224"
-	}
-	module, err := readModule(modulePath)
-	if err != nil {
-		t.Fatal(err)
 	}
 	// Downloader 零值构造没有 HTTP client，取网络时会 nil 解引用 ——
 	// 这里按上游 newNativeEngine 的做法配一个（真实运行时核心会自己配好）。
