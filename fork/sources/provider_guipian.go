@@ -545,6 +545,9 @@ var guipianDescriptor = core.SourceDescriptor{
 }
 
 func init() {
+	if !sourceEnabledInFlavor("guipian") {
+		return
+	}
 	core.Register(guipianDescriptor, func(host core.Host) core.Provider { return &guipianProvider{host: host} })
 }
 

@@ -287,6 +287,12 @@ var jinguoDescriptor = core.SourceDescriptor{
 }
 
 func init() {
+	if !sourceEnabledInFlavor("jinguo") {
+		return
+	}
+	if !sourceEnabledInFlavor("jinguo") {
+		return
+	}
 	core.Register(jinguoDescriptor, func(host core.Host) core.Provider {
 		return &jinguoProvider{host: host, client: &jinguoAPIClient{host: host}}
 	})

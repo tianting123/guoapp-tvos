@@ -128,11 +128,14 @@ actor CoreClient {
         return playbackSequence
     }
 
-    /// 初始化核心。返回核心编译时是否包含全部站源（--all-sources）与站源清单。
+    /// 初始化核心。返回核心编译时是否包含全部站源与站源清单。
     ///
-    /// 上游自 1.0.8 起不再返回 allSources 布尔值，改为返回编译期版本名
-    /// flavor（hongguojian / zhenguojian）与站源清单 sources；
-    /// 界面不再写死站源表，改为按核心给的清单显示。
+    /// 上游 1.0.8 起由核心在初始化时给出站源清单 sources，界面不再写死站源表。
+    /// 上游 11-14（cf0dc7a）把 flavor 字段也删了 —— 核心不再内置站源，
+    /// 站源改成运行时安装的 JS 模块。
+    /// 所以这里不再读 flavor，改为**从站源清单本身判断**：
+    /// 清单里只有一个站源（红果）就是火龙果短剧版，有多个就是真果鉴版。
+    /// 这样不依赖核心的具体字段，核心换实现也不会失配。
     func initialize() async throws -> (allSources: Bool, sources: [SourceSite]) {
         if initialized { return (allSources, sources) }
         // tvOS 沙盒：真机上 Documents / Application Support 只读，只有
@@ -144,16 +147,13 @@ actor CoreClient {
         ).first ?? FileManager.default.temporaryDirectory
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let data = try await call(["action": "initialize", "directory": directory.path])
-        flavor = data["flavor"] as? String ?? ""
-        allSources = flavor == "zhenguojian"
         sources = (data["sources"] as? [[String: Any]] ?? []).compactMap { SourceSite(dict: $0) }
+        allSources = sources.count > 1
         initialized = true
         return (allSources, sources)
     }
 
     private(set) var allSources = false
-    /// 核心编译期版本名：hongguojian（仅红果）/ zhenguojian（全部站源）。
-    private(set) var flavor = ""
     /// 核心告知的站源清单（含名称、描述与可用能力）。
     private(set) var sources: [SourceSite] = []
 

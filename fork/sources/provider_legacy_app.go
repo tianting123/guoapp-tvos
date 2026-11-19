@@ -195,6 +195,12 @@ var legacyDescriptor = core.SourceDescriptor{
 }
 
 func init() {
+	if !sourceEnabledInFlavor("cloudfront") {
+		return
+	}
+	if !sourceEnabledInFlavor("cloudfront") {
+		return
+	}
 	core.Register(legacyDescriptor, func(host core.Host) core.Provider {
 		return &legacyProvider{host: host, cfg: legacyConfig{Retries: 2}, client: &legacyAPIClient{}}
 	})

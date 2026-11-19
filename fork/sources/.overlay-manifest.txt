@@ -1,5 +1,7 @@
-flavor_hongguojian.go
-flavor_zhenguojian.go
+flavor_sources.go
+flavor_sources_all.go
+flavor_sources_red.go
+flavor_sources_test.go
 provider_beabox.go
 provider_detail_metadata.go
 provider_discovery.go

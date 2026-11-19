@@ -737,6 +737,9 @@ var beaboxDescriptor = core.SourceDescriptor{
 }
 
 func init() {
+	if !sourceEnabledInFlavor("beabox") {
+		return
+	}
 	core.Register(beaboxDescriptor, func(host core.Host) core.Provider { return &beaboxProvider{host: host} })
 }
 

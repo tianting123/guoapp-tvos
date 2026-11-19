@@ -337,6 +337,12 @@ var yeguoDescriptor = core.SourceDescriptor{
 }
 
 func init() {
+	if !sourceEnabledInFlavor("yeguo") {
+		return
+	}
+	if !sourceEnabledInFlavor("yeguo") {
+		return
+	}
 	core.Register(yeguoDescriptor, func(host core.Host) core.Provider {
 		return &yeguoProvider{host: host, client: &yeguoAPIClient{host: host, site: yeguoBaseURL}}
 	})

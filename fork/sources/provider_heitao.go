@@ -534,6 +534,9 @@ var heitaoDescriptor = core.SourceDescriptor{
 }
 
 func init() {
+	if !sourceEnabledInFlavor("heitao") {
+		return
+	}
 	core.Register(heitaoDescriptor, func(host core.Host) core.Provider { return &heitaoProvider{host: host} })
 }
 

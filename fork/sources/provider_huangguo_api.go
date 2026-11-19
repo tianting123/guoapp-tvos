@@ -232,6 +232,9 @@ var huangguoAIDescriptor = core.SourceDescriptor{
 }
 
 func init() {
+	if !sourceEnabledInFlavor("huangguoai") {
+		return
+	}
 	core.Register(huangguoAIDescriptor, func(host core.Host) core.Provider { return &huangguoAIProvider{host: host} })
 }
 

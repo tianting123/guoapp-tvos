@@ -360,6 +360,12 @@ var jinguoDuanjuDescriptor = core.SourceDescriptor{
 }
 
 func init() {
+	if !sourceEnabledInFlavor("jinguoduanju") {
+		return
+	}
+	if !sourceEnabledInFlavor("jinguoduanju") {
+		return
+	}
 	core.Register(jinguoDuanjuDescriptor, func(host core.Host) core.Provider {
 		return &jinguoDuanjuProvider{host: host, client: &jinguoDuanjuAPIClient{host: host}}
 	})

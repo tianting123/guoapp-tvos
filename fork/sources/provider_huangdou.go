@@ -543,6 +543,9 @@ var huangdouDescriptor = core.SourceDescriptor{
 }
 
 func init() {
+	if !sourceEnabledInFlavor("huangdou") {
+		return
+	}
 	core.Register(huangdouDescriptor, func(host core.Host) core.Provider { return &huangdouProvider{host: host} })
 }
 

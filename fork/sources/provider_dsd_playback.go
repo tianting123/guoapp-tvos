@@ -595,6 +595,9 @@ var dSDDescriptor = core.SourceDescriptor{
 }
 
 func init() {
+	if !sourceEnabledInFlavor("dsd") {
+		return
+	}
 	core.Register(dSDDescriptor, func(host core.Host) core.Provider { return &dSDProvider{host: host, site: dsdBaseURL} })
 }
 

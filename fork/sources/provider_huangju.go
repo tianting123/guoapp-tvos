@@ -369,6 +369,12 @@ var huangjuDescriptor = core.SourceDescriptor{
 }
 
 func init() {
+	if !sourceEnabledInFlavor("huangju") {
+		return
+	}
+	if !sourceEnabledInFlavor("huangju") {
+		return
+	}
 	core.Register(huangjuDescriptor, func(host core.Host) core.Provider {
 		return &huangjuProvider{host: host, client: &huangjuAPIClient{host: host, base: huangjuAPIBaseURL, site: huangjuBaseURL}}
 	})

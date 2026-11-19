@@ -40,6 +40,9 @@ var hongguoDescriptor = core.SourceDescriptor{
 }
 
 func init() {
+	if !sourceEnabledInFlavor("hongguo") {
+		return
+	}
 	core.Register(hongguoDescriptor, func(host core.Host) core.Provider { return &hongguoProvider{host: host, client: newHongguoAppClient()} })
 }
 

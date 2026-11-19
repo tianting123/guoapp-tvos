@@ -439,6 +439,12 @@ var huangguoVideoDescriptor = core.SourceDescriptor{
 }
 
 func init() {
+	if !sourceEnabledInFlavor("huangguo-video") {
+		return
+	}
+	if !sourceEnabledInFlavor("huangguo-video") {
+		return
+	}
 	core.Register(huangguoVideoDescriptor, func(host core.Host) core.Provider {
 		return &huangguoVideoProvider{host: host, site: huangguoVideoBaseURL}
 	})

@@ -400,6 +400,12 @@ var soraniDescriptor = core.SourceDescriptor{
 }
 
 func init() {
+	if !sourceEnabledInFlavor("sorani") {
+		return
+	}
+	if !sourceEnabledInFlavor("sorani") {
+		return
+	}
 	core.Register(soraniDescriptor, func(host core.Host) core.Provider {
 		return &soraniProvider{host: host, client: &soraniAPIClient{host: host, base: soraniAPIBaseURL, site: soraniSiteBaseURL}}
 	})
