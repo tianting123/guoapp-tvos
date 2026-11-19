@@ -74,11 +74,10 @@ var hongguoAppQueryFields = []struct {
 	{"resolution", "1280*2772"}, {"dpi", "520"}, {"ac", "wifi"},
 }
 
-// hongguoPlaybackIdentity：站方发的注册身份（device_id / iid / cdid）。
+// hongguoPlaybackIdentity：站方发的注册身份（device_id / iid）。
 type hongguoPlaybackIdentity struct {
 	DeviceID  string
 	InstallID string
-	CDID      string
 	CreatedAt time.Time
 }
 
@@ -172,7 +171,10 @@ func (p *hongguoProvider) hongguoPlaybackModelOnce(ctx context.Context, videoID 
 	}
 	values["device_id"] = identity.DeviceID
 	values["iid"] = identity.InstallID
-	values["cdid"] = identity.CDID
+	// ⭐ cdid 每次取址都重新生成 —— 官方与上游 tvOS 都是这样（playbackQuery 里
+	// 写的是 cdid: uuidLike()），不是把注册时那个原样带回来。
+	// 注册 body 里的 cdid 与取址 query 里的 cdid 是两个无关的值。
+	values["cdid"] = newHongguoPlaybackUUID()
 
 	query, headers, err := hongguoV5SignedHeaders(values, body, hongguoV5NowMs())
 	if err != nil {
@@ -396,7 +398,7 @@ func (p *hongguoProvider) registerHongguoPlaybackDevice(ctx context.Context) (*h
 		return nil, errors.New("红果设备注册未返回设备号")
 	}
 	return &hongguoPlaybackIdentity{
-		DeviceID: deviceID, InstallID: installID, CDID: cdid, CreatedAt: time.Now(),
+		DeviceID: deviceID, InstallID: installID, CreatedAt: time.Now(),
 	}, nil
 }
 

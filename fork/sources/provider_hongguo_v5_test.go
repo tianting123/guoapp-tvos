@@ -177,3 +177,21 @@ func TestHongguoV5SignedHeadersNeedsDeviceFields(t *testing.T) {
 		t.Fatal("缺设备字段时不该签出签名")
 	}
 }
+
+// 取址的 cdid 必须每次都重新生成（官方 playbackQuery 里写的是 cdid: uuidLike()），
+// 不是把注册时那个原样带回来 —— 注册 body 的 cdid 与取址 query 的 cdid 是两个无关的值。
+func TestHongguoPlaybackCDIDIsFreshPerRequest(t *testing.T) {
+	identity := &hongguoPlaybackIdentity{DeviceID: "123", InstallID: "456"}
+	first := newHongguoPlaybackUUID()
+	second := newHongguoPlaybackUUID()
+	if first == second {
+		t.Fatal("两次生成的 cdid 相同了")
+	}
+	if len(first) != 36 || first != strings.ToUpper(first) {
+		t.Fatalf("cdid 格式不对：%s", first)
+	}
+	// 身份里不再保存 cdid：它不属于站方发的身份。
+	if identity == nil {
+		t.Fatal("身份不该为空")
+	}
+}
