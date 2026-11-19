@@ -1,0 +1,17 @@
+diff --git a/native/core/module_host.go b/native/core/module_host.go
+index 6466d41..9d43e01 100644
+--- a/native/core/module_host.go
++++ b/native/core/module_host.go
+@@ -185,6 +185,12 @@ func (p *jsProvider) hostUtilities(instance *jsInstance) map[string]any {
+ 			sum := md5.Sum(bytesOf(data))
+ 			return bytesValue(sum[:])
+ 		},
++		// ⭐ SM3：站源模块的播放签名要用（官方红果模块的 v5 签名）。
++		// 上游宿主只提供了 md5 / sha256，缺 SM3，官方模块跑不起来。
++		"sm3": func(data goja.Value) goja.Value {
++			sum := ModuleSM3(bytesOf(data))
++			return bytesValue(sum[:])
++		},
+ 		"sha256": func(data goja.Value) goja.Value {
+ 			sum := sha256.Sum256(bytesOf(data))
+ 			return bytesValue(sum[:])
