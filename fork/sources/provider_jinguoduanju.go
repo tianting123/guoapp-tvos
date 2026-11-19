@@ -352,7 +352,6 @@ var jinguoDuanjuDescriptor = core.SourceDescriptor{
 	ID:                 sourceJinguoDuanju,
 	Name:               "禁果短剧",
 	Description:        "推荐 · 分类短剧 · 在线搜索",
-	DefaultOff:         true,
 	Aliases:            []string{"jinguoduanju.app", "www.jinguoduanju.app", "play.jinguoduanju.app", "jgdj.app", "www.jgdj.app"},
 	BaseURL:            jinguoDuanjuBaseURL,
 	AllowEmptyCatalog:  true,

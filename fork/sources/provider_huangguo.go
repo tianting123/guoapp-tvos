@@ -429,7 +429,6 @@ var huangguoVideoDescriptor = core.SourceDescriptor{
 	Group:              "huangguo",
 	GroupName:          "黄果",
 	EntryName:          "视频",
-	DefaultOff:         true,
 	Aliases:            []string{"huangguo.video"},
 	BrowserFingerprint: true,
 	BaseURL:            huangguoVideoBaseURL,

@@ -122,8 +122,21 @@ def main():
         count = len(list(sources.glob('*.go')))
     # 6. 生成 go.work 与 bridge/sources_gen.go，接入本仓的站源包。
     #    这两处上游不入库（上游 .gitignore 已忽略），每次构建重生成。
+    #
+    #    go.work 的 go 指令必须**跟着上游 go.mod 走**：上游提 Go 版本后，
+    #    写死的旧版本会让 go 命令直接罢工 ——
+    #    "module . listed in go.work file requires go >= 1.26.10,
+    #     but go.work lists go 1.24.1"（2026-11-20 的同步失败就是这个）。
+    go_version = '1.24.1'
+    go_mod = native / 'go.mod'
+    if go_mod.exists():
+        for line in go_mod.read_text(encoding='utf-8').splitlines():
+            stripped = line.strip()
+            if stripped.startswith('go '):
+                go_version = stripped[3:].strip()
+                break
     (native / 'go.work').write_text(
-        'go 1.24.1\n\nuse (\n\t.\n)\n', encoding='utf-8')
+        f'go {go_version}\n\nuse (\n\t.\n)\n', encoding='utf-8')
     (native / 'bridge' / 'sources_gen.go').write_text(
         'package main\n\nimport (\n\t_ "duanjuapp/native/sources"\n)\n',
         encoding='utf-8')

@@ -587,7 +587,6 @@ var dSDDescriptor = core.SourceDescriptor{
 	ID:                sourceDSD,
 	Name:              "帝果",
 	Description:       "分类视频 · 在线搜索",
-	DefaultOff:        true,
 	SkipVIPPrompt:     true,
 	Aliases:           []string{"dsd.com.se", "www.dsd.com.se"},
 	BaseURL:           dsdBaseURL,

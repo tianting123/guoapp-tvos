@@ -731,7 +731,6 @@ var beaboxDescriptor = core.SourceDescriptor{
 	ID:                sourceBeabox,
 	Name:              "笔盒",
 	Description:       "分类视频 · 在线搜索",
-	DefaultOff:        true,
 	BaseURL:           beaboxBaseURL,
 	AllowEmptyCatalog: true,
 	ValidCategory:     validBeaboxCategory,

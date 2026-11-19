@@ -213,7 +213,6 @@ var huangguoAIDescriptor = core.SourceDescriptor{
 	Group:       "huangguo",
 	GroupName:   "黄果",
 	EntryName:   "AI",
-	DefaultOff:  true,
 	Aliases:     []string{"huangguo", "huangguoai.com"},
 	MatchesHost: func(host string) bool { return isHuangguoAIBaseHost(host) || isHuangguoAIMirrorHost(host) },
 	BaseURL:     huangguoAIBaseURL,

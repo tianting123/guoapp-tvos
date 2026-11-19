@@ -29,6 +29,7 @@ provider_hongguo_sign551_test.go
 provider_hongguo_suggestions.go
 provider_hongguo_tags.go
 provider_hongguo_v5.go
+provider_hongguo_v5_parse_test.go
 provider_hongguo_v5_sign.go
 provider_hongguo_v5_test.go
 provider_huangdou.go

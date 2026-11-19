@@ -281,7 +281,6 @@ var jinguoDescriptor = core.SourceDescriptor{
 	ID:                 sourceJinguo,
 	Name:               "禁果",
 	Description:        "精选 · 最新 · 分类短剧 · 在线搜索",
-	DefaultOff:         true,
 	AllowEmptyCatalog:  true,
 	KeepDetailEpisodes: true,
 	ValidCategory:      validJinguoCategory,

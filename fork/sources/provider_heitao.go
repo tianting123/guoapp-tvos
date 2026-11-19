@@ -527,7 +527,6 @@ var heitaoDescriptor = core.SourceDescriptor{
 	ID:                sourceHeitao,
 	Name:              "黑桃",
 	Description:       "分类短剧 · 在线搜索",
-	DefaultOff:        true,
 	Aliases:           []string{"heitaodj.com", "www.heitaodj.com"},
 	BaseURL:           heitaoBaseURL,
 	AllowEmptyCatalog: true,

@@ -360,7 +360,6 @@ var huangjuDescriptor = core.SourceDescriptor{
 	ID:                 sourceHuangju,
 	Name:               "剧果",
 	Description:        "热门 · 最新 · 分类短剧",
-	DefaultOff:         true,
 	Aliases:            []string{"huangju.net", "www.huangju.net", "api.huangju.net"},
 	BaseURL:            huangjuBaseURL,
 	AllowEmptyCatalog:  true,

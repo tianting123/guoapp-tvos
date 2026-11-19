@@ -190,7 +190,6 @@ var legacyDescriptor = core.SourceDescriptor{
 	Group:         "huangguo",
 	GroupName:     "黄果",
 	EntryName:     "旧版",
-	DefaultOff:    true,
 	BaseURL:       "https://d2pypzndaqisk.cloudfront.net",
 	ValidCategory: func(category string) bool { return strings.TrimSpace(category) == category },
 }
