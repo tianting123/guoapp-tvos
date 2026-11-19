@@ -223,54 +223,9 @@ func (p *hongguoProvider) hongguoPlaybackModelOnce(ctx context.Context, videoID 
 	if data == nil {
 		return nil, errors.New("红果取址接口没有数据")
 	}
-	// 模型可能挂在 data 下，也可能挂在 data["1004"] 下（官方两种形状都处理）。
-	rows := data
-	if nested, ok := data["1004"].(map[string]any); ok {
-		rows = nested
-	}
-	row, _ := rows[videoID].(map[string]any)
-	if row == nil {
-		for _, value := range rows {
-			if candidate, ok := value.(map[string]any); ok && candidate["video_model"] != nil {
-				row = candidate
-				break
-			}
-		}
-	}
-	if row == nil {
-		return nil, errors.New("红果取址接口没有这一集的数据")
-	}
-	raw, ok := row["video_model"]
-	if !ok {
-		return nil, errors.New("红果取址接口没有播放模型")
-	}
-	var model map[string]any
-	switch value := raw.(type) {
-	case map[string]any:
-		model = value
-	case string:
-		decoded, err := decodeHongguoBase64(value)
-		if err != nil {
-			decoded = []byte(value)
-		}
-		if err := json.Unmarshal(decoded, &model); err != nil {
-			return nil, errors.New("红果播放模型格式异常")
-		}
-	default:
-		return nil, errors.New("红果播放模型类型不对")
-	}
-	if len(model) == 0 {
-		// 官方还兼容一种形状：video_list 直接挂在 data 下。
-		if list := anyList(data["video_list"]); len(list) > 0 {
-			model = map[string]any{
-				"video_list":     data["video_list"],
-				"video_duration": data["video_duration"],
-				"duration":       data["duration"],
-			}
-		}
-	}
-	if len(model) == 0 {
-		return nil, errors.New("红果播放模型是空的")
+	model := parseHongguoPlaybackReply(reply, videoID)
+	if model == nil {
+		return nil, errors.New("红果取址接口没有可用的播放模型")
 	}
 	return model, nil
 }
@@ -439,4 +394,71 @@ func firstNonEmptyString(values ...any) string {
 		}
 	}
 	return ""
+}
+
+// parseHongguoPlaybackReply：从站方回复里取出这一集的播放模型。
+//
+// 官方与上游 tvOS 2.56 都要支持两种形状：
+//  1. data["1004"][集].video_model —— 播放模型是一段 JSON 字符串，要再 parse 一次；
+//  2. data["1004"][集].video_list —— 这一集直接给 video_list，没有 video_model 包装。
+//
+// 返回 nil 表示两种形状都没取到。
+func parseHongguoPlaybackReply(reply map[string]any, videoID string) map[string]any {
+	data, _ := reply["data"].(map[string]any)
+	if data == nil {
+		return nil
+	}
+	// 模型可能挂在 data 下，也可能挂在 data["1004"] 下。
+	rows := data
+	if nested, ok := data["1004"].(map[string]any); ok {
+		rows = nested
+	}
+	row, _ := rows[videoID].(map[string]any)
+	if row == nil {
+		for _, value := range rows {
+			if candidate, ok := value.(map[string]any); ok && candidate["video_model"] != nil {
+				row = candidate
+				break
+			}
+		}
+	}
+	if row == nil {
+		// 官方还兼容一种形状：video_list 直接挂在 data 顶层下。
+		if list := anyList(data["video_list"]); len(list) > 0 {
+			return map[string]any{
+				"video_list":     data["video_list"],
+				"video_duration": data["video_duration"],
+				"duration":       data["duration"],
+			}
+		}
+		return nil
+	}
+	raw, ok := row["video_model"]
+	if !ok {
+		// 这一集直接给 video_list（没有 video_model 包装）。
+		// 兜底要在**同一层**找 —— 顶层 data["video_list"] 是另一个集的数据，不能混用。
+		if list := anyList(row["video_list"]); len(list) > 0 {
+			return map[string]any{
+				"video_list":     row["video_list"],
+				"video_duration": row["video_duration"],
+				"duration":       row["duration"],
+			}
+		}
+		return nil
+	}
+	switch value := raw.(type) {
+	case map[string]any:
+		return value
+	case string:
+		decoded, err := decodeHongguoBase64(value)
+		if err != nil {
+			decoded = []byte(value)
+		}
+		var model map[string]any
+		if err := json.Unmarshal(decoded, &model); err != nil {
+			return nil
+		}
+		return model
+	}
+	return nil
 }
