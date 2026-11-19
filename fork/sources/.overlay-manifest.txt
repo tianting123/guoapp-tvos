@@ -1,5 +1,6 @@
 flavor_sources.go
 flavor_sources_all.go
+flavor_sources_gohongguo.go
 flavor_sources_red.go
 flavor_sources_test.go
 provider_beabox.go
