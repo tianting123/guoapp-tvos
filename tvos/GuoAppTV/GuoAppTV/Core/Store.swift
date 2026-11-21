@@ -71,8 +71,21 @@ final class AppState: ObservableObject {
                 selectedSource = "hongguo"
             }
             initialized = true
+            applyDebugCommand()
         } catch {
             initializeError = error.localizedDescription
+        }
+    }
+
+    /// 调试通道：Caches/debug.json 写 {"selectedSource":"jinguo"} 可在下次启动时
+    /// 直接切到该站源（免遥控器，用于批量验证站源可用性）。
+    private func applyDebugCommand() {
+        guard let directory = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first,
+              let data = try? Data(contentsOf: directory.appendingPathComponent("debug.json")),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
+        if let source = object["selectedSource"] as? String, !source.isEmpty,
+           availableSites.contains(where: { $0.id == source }) {
+            selectedSource = source
         }
     }
 }
