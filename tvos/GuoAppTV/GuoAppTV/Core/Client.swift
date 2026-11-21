@@ -146,7 +146,13 @@ actor CoreClient {
             for: .cachesDirectory, in: .userDomainMask
         ).first ?? FileManager.default.temporaryDirectory
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let data = try await call(["action": "initialize", "directory": directory.path])
+        let cacheDirectory = directory.appendingPathComponent("cache")
+        try FileManager.default.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
+        let data = try await call([
+            "action": "initialize",
+            "directory": directory.path,
+            "cache": cacheDirectory.path,
+        ])
         sources = (data["sources"] as? [[String: Any]] ?? []).compactMap { SourceSite(dict: $0) }
         allSources = sources.count > 1
         initialized = true
