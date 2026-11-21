@@ -1,8 +1,8 @@
 diff --git a/native/core/app_runtime.go b/native/core/app_runtime.go
-index ece4848..7ff4c4f 100644
+index 2087acd..a38c4af 100644
 --- a/native/core/app_runtime.go
 +++ b/native/core/app_runtime.go
-@@ -60,6 +60,7 @@ type LibraryDrama struct {
+@@ -62,6 +62,7 @@ type LibraryDrama struct {
  	Tags           []string `json:"tags,omitempty"`
  	ReleaseStatus  string   `json:"releaseStatus,omitempty"`
  	Badge          string   `json:"badge,omitempty"`
@@ -10,7 +10,7 @@ index ece4848..7ff4c4f 100644
  }
  
  type nativeInput struct {
-@@ -199,7 +200,7 @@ func NativeNormalize(drama Drama) LibraryDrama {
+@@ -211,7 +212,7 @@ func NativeNormalize(drama Drama) LibraryDrama {
  		Description: FirstNonEmpty(drama.Desc, drama.Intro), Cover: cover, Episodes: episodes,
  		Category: nativeDramaCategory(drama), VIP: drama.VIP,
  		Heat: drama.Heat, Views: drama.Views, OnlineDate: ProviderReleaseDate(drama.OnlineDate), Score: NativeDramaScore(drama.Score),
@@ -19,7 +19,22 @@ index ece4848..7ff4c4f 100644
  }
  
  func NativeDramaScore(score string) string {
-@@ -376,6 +377,10 @@ func nativeDispatch(input nativeInput) (any, error) {
+@@ -336,6 +337,14 @@ func nativeDispatch(input nativeInput) (any, error) {
+ 		}
+ 		engine := nativeState.engine
+ 		nativeState.Unlock()
++		{
++			ids := make([]string, 0)
++			for _, d := range registeredDescriptors() {
++				ids = append(ids, d.ID)
++			}
++			engine.downloader.recordDiagnostic(diagnosticEvent{Time: time.Now(), Level: "info", Event: "initialize_debug",
++				Message: "dir=" + input.Directory + " cache=" + input.Cache + " sources=" + strings.Join(ids, ",")})
++		}
+ 		return map[string]any{"version": "0.2.17", "standalone": true, "sources": engine.sourceList()}, nil
+ 	}
+ 	engine := nativeState.engine
+@@ -409,6 +418,10 @@ func nativeDispatch(input nativeInput) (any, error) {
  	case "suggestions":
  		items, err := engine.suggestions(ctx, nativeActionSource(input), input.Query)
  		return map[string]any{"items": items}, err
