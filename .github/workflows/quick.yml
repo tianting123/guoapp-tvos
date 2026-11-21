@@ -1,0 +1,48 @@
+name: Quick tvOS build
+
+# 快速构建：手动触发，只出真果鉴（全站源）一个 IPA，不发 Release、不跑 Go checks。
+# 用于迭代调试；完整发布流程仍走 build.yml。
+# 产物：Actions 页面下载 zhenguojian-quick（保留 7 天）。
+
+on:
+  workflow_dispatch:
+
+permissions:
+  # 只下载 artifact，不发布 Release，读权限即可。
+  contents: read
+
+jobs:
+  tvos:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Go 核心在上游 submodule（upstream/native），需拉取子模块才能构建。
+          submodules: recursive
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.14'
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: upstream/native/go.mod
+          cache-dependency-path: upstream/native/go.sum
+      - name: Check Xcode and Go
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcode-select -p
+          xcodebuild -version
+          xcrun --sdk appletvos --show-sdk-path
+          xcrun --sdk appletvos --find clang
+          go version
+      # build_tvos.py 内部会先执行 apply_fork_overlay.py，再编译 Go 核心
+      # 和打包 Swift 应用；--all-sources 即真果鉴（全站源）。
+      - name: Build zhenguojian tvOS package
+        run: python scripts/build_tvos.py --all-sources
+      - uses: actions/upload-artifact@v7
+        with:
+          name: zhenguojian-quick
+          path: dist/tvos/*
+          if-no-files-found: error
+          retention-days: 7
