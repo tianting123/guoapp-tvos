@@ -24,17 +24,17 @@ enum FeedLoader {
         }
         var page: CatalogPage
         do {
-            page = try await CoreClient.shared.recommendations(feed: feedKey, force: force)
+            page = try await CoreClient.shared.recommendations(source: source, feed: feedKey, force: force)
         } catch {
             guard force, !Task.isCancelled else { throw error }
-            page = try await CoreClient.shared.recommendations(feed: feedKey)
+            page = try await CoreClient.shared.recommendations(source: source, feed: feedKey)
         }
         var requests = 1
         while page.hasMore, page.items.count < target, requests < maximumRequests, !Task.isCancelled {
             requests += 1
             // 「more」失败（如核心说暂时没有新的推荐）时用已有的，不算整体失败；
             // 偶尔空一批（没变多）不算到底，在 4 次请求以内接着取。
-            guard let next = try? await CoreClient.shared.recommendations(feed: feedKey, more: true) else { break }
+            guard let next = try? await CoreClient.shared.recommendations(source: source, feed: feedKey, more: true) else { break }
             if next.items.count > page.items.count { page = next }
         }
         return FeedBatch(dramas: unique(page.items), hasMore: page.hasMore)
@@ -43,7 +43,7 @@ enum FeedLoader {
     /// 核心存着的推荐（不联网、立刻返回）：红果才有；取不到或其它站源时为空。
     static func cached(source: String) async -> [Drama] {
         guard source == hongguoSource,
-              let page = try? await CoreClient.shared.cachedRecommendations(feed: feedKey)
+              let page = try? await CoreClient.shared.cachedRecommendations(source: source, feed: feedKey)
         else { return [] }
         return unique(page.items)
     }
@@ -53,7 +53,7 @@ enum FeedLoader {
     static func more(source: String, page: Int) async throws -> FeedBatch {
         let result: CatalogPage
         if source == hongguoSource {
-            result = try await CoreClient.shared.recommendations(feed: feedKey, more: true)
+            result = try await CoreClient.shared.recommendations(source: source, feed: feedKey, more: true)
         } else {
             result = try await CoreClient.shared.catalog(source: source, page: page)
         }
