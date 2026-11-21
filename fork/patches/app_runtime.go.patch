@@ -1,5 +1,5 @@
 diff --git a/native/core/app_runtime.go b/native/core/app_runtime.go
-index 2087acd..a38c4af 100644
+index 2087acd..6fc8580 100644
 --- a/native/core/app_runtime.go
 +++ b/native/core/app_runtime.go
 @@ -62,6 +62,7 @@ type LibraryDrama struct {
@@ -19,7 +19,21 @@ index 2087acd..a38c4af 100644
  }
  
  func NativeDramaScore(score string) string {
-@@ -336,6 +337,14 @@ func nativeDispatch(input nativeInput) (any, error) {
+@@ -322,6 +323,13 @@ func NativeRequest(raw string) (result string) {
+ 
+ func nativeDispatch(input nativeInput) (any, error) {
+ 	if err := nativeAuthorizeInput(input); err != nil {
++		nativeState.Lock()
++		engine := nativeState.engine
++		nativeState.Unlock()
++		if engine != nil {
++			engine.downloader.recordDiagnostic(diagnosticEvent{Time: time.Now(), Level: "error", Event: "authorize_denied",
++				Message: "action=" + input.Action + " source=" + input.Source + " board=" + input.Board + " err=" + err.Error()})
++		}
+ 		return nil, err
+ 	}
+ 	nativeState.Lock()
+@@ -336,6 +344,14 @@ func nativeDispatch(input nativeInput) (any, error) {
  		}
  		engine := nativeState.engine
  		nativeState.Unlock()
@@ -34,7 +48,7 @@ index 2087acd..a38c4af 100644
  		return map[string]any{"version": "0.2.17", "standalone": true, "sources": engine.sourceList()}, nil
  	}
  	engine := nativeState.engine
-@@ -409,6 +418,10 @@ func nativeDispatch(input nativeInput) (any, error) {
+@@ -409,6 +425,10 @@ func nativeDispatch(input nativeInput) (any, error) {
  	case "suggestions":
  		items, err := engine.suggestions(ctx, nativeActionSource(input), input.Query)
  		return map[string]any{"items": items}, err
