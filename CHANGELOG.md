@@ -463,3 +463,7 @@
 
 - 同步上游核心到 Xanerix/guoapp `6d4516e`（docs: 更新日志补充 #241 iOS 锁屏后换集失败修复）。本次仅更新 Go 核心（submodule 指针），tvOS 应用代码无改动。
 
+## 2.69.7
+
+- 同步上游核心到 Xanerix/guoapp `41b8206`（chore: 红果站源收回为私有仓库，撤出在线仓库，CI 改回用只读部署密钥检出）。本次仅更新 Go 核心（submodule 指针），tvOS 应用代码无改动。
+
