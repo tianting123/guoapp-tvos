@@ -471,3 +471,7 @@
 
 - 同步上游核心到 Xanerix/guoapp `23d7971`（fix: 调整 #246 返回主页按钮位置，补齐音频页与详情页路由守卫）。本次仅更新 Go 核心（submodule 指针），tvOS 应用代码无改动。
 
+## 2.69.9
+
+- 同步上游核心到 Xanerix/guoapp `8493adf`（feat(linux): 新增 Linux x86_64 官方支持与 AppImage 构建发布（#271））。本次仅更新 Go 核心（submodule 指针），tvOS 应用代码无改动。
+
