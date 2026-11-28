@@ -475,3 +475,7 @@
 
 - 同步上游核心到 Xanerix/guoapp `8493adf`（feat(linux): 新增 Linux x86_64 官方支持与 AppImage 构建发布（#271））。本次仅更新 Go 核心（submodule 指针），tvOS 应用代码无改动。
 
+## 2.69.10
+
+- 同步上游核心到 Xanerix/guoapp `ffc2b6d`（feat(player): 统一桌面播放器双键位与鼠标控制并改名为「控制」分组（#258））。本次仅更新 Go 核心（submodule 指针），tvOS 应用代码无改动。
+
